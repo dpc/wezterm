@@ -72,6 +72,17 @@ The following options can be specified in the same way:
 * [freetype_render_target](../config/freetype_render_target.md)
 * [freetype_load_flags](../config/freetype_load_flags.md)
 * `assume_emoji_presentation = true` or `assume_emoji_presentation = false` to control whether a font is considered to have emoji (rather than text) presentation glyphs for emoji. {{since('20220807-113146-c2fee766', inline=True)}}
+* `center_double_width_color_glyphs = true` horizontally centers final color
+  glyph bitmaps from that fallback font when shaping assigns exactly two cells
+  and the bitmap fits within the rendered span. It changes only bitmap
+  placement; Unicode width, shaping advances, grid occupancy, cursor position,
+  and following text remain unchanged. One-cell and monochrome glyphs, glyphs
+  from the primary font, and overflowing bitmaps retain their font-provided
+  bearings. {{since('Nightly Builds Only', inline=True)}}
+
+  This option uses those rendering properties rather than Unicode emoji
+  classification. If you enable it for a color font that also supplies
+  double-width text, CJK, or ligature glyphs, those glyphs can also be centered.
 
 ## Dealing with different fallback font heights
 

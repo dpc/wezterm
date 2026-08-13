@@ -515,7 +515,11 @@ impl crate::TermWindow {
 
                         let pos_x = cluster_x_pos
                             + if params.use_pixel_positioning {
-                                (glyph.x_offset + glyph.bearing_x).get() as f32
+                                if glyph.is_horizontally_centered {
+                                    0.
+                                } else {
+                                    (glyph.x_offset + glyph.bearing_x).get() as f32
+                                }
                             } else {
                                 0.
                             };

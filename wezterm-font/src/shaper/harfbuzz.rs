@@ -840,6 +840,28 @@ mod test {
     use config::FontAttributes;
 
     #[test]
+    fn resolves_color_glyph_centering_per_font() {
+        let db = FontDatabase::with_built_in().unwrap();
+        let primary = FontAttributes::new("JetBrains Mono");
+        let mut centered_fallback = FontAttributes::new_fallback("Noto Color Emoji");
+        centered_fallback.center_double_width_color_glyphs = true;
+
+        let primary = db
+            .resolve(&primary, 14)
+            .unwrap()
+            .clone()
+            .synthesize(&primary);
+        let centered_fallback = db
+            .resolve(&centered_fallback, 14)
+            .unwrap()
+            .clone()
+            .synthesize(&centered_fallback);
+
+        assert!(!primary.center_double_width_color_glyphs);
+        assert!(centered_fallback.center_double_width_color_glyphs);
+    }
+
+    #[test]
     fn ligatures() {
         let _ = env_logger::Builder::new()
             .is_test(true)
@@ -862,6 +884,7 @@ mod test {
                     harfbuzz_features: None,
                     scale: None,
                     assume_emoji_presentation: None,
+                    center_double_width_color_glyphs: false,
                 },
                 14,
             )

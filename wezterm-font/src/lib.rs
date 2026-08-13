@@ -262,6 +262,15 @@ impl LoadedFont {
         }
     }
 
+    /// Returns whether the selected font requests double-width color glyph centering.
+    pub fn center_double_width_color_glyphs(&self, font_idx: usize) -> bool {
+        self.handles
+            .borrow()
+            .get(font_idx)
+            .map(|font| font.center_double_width_color_glyphs)
+            .unwrap_or(false)
+    }
+
     pub fn rasterize_glyph(
         &self,
         glyph_pos: u32,

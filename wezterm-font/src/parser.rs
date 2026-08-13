@@ -33,6 +33,7 @@ pub struct ParsedFont {
     pub synthesize_bold: bool,
     pub synthesize_dim: bool,
     pub assume_emoji_presentation: bool,
+    pub center_double_width_color_glyphs: bool,
     pub pixel_sizes: Vec<u16>,
     pub is_built_in_fallback: bool,
     pub palettes: Vec<FontPaletteInfo>,
@@ -57,6 +58,10 @@ impl std::fmt::Debug for ParsedFont {
             .field("synthesize_bold", &self.synthesize_bold)
             .field("synthesize_dim", &self.synthesize_dim)
             .field("assume_emoji_presentation", &self.assume_emoji_presentation)
+            .field(
+                "center_double_width_color_glyphs",
+                &self.center_double_width_color_glyphs,
+            )
             .field("pixel_sizes", &self.pixel_sizes)
             .field("harfbuzz_features", &self.harfbuzz_features)
             .field("freetype_load_target", &self.freetype_load_target)
@@ -78,6 +83,7 @@ impl Clone for ParsedFont {
             synthesize_bold: self.synthesize_bold,
             synthesize_dim: self.synthesize_dim,
             assume_emoji_presentation: self.assume_emoji_presentation,
+            center_double_width_color_glyphs: self.center_double_width_color_glyphs,
             handle: self.handle.clone(),
             cap_height: self.cap_height,
             coverage: Mutex::new(self.coverage.lock().unwrap().clone()),
@@ -520,6 +526,7 @@ impl ParsedFont {
             synthesize_dim: false,
             is_built_in_fallback: false,
             assume_emoji_presentation,
+            center_double_width_color_glyphs: false,
             handle,
             coverage: Mutex::new(RangeSet::new()),
             cap_height,
@@ -781,6 +788,7 @@ impl ParsedFont {
         self.freetype_load_target = attr.freetype_load_target;
         self.freetype_load_flags = attr.freetype_load_flags;
         self.scale = attr.scale.map(|f| *f);
+        self.center_double_width_color_glyphs = attr.center_double_width_color_glyphs;
 
         self.synthesize_italic = self.style == FontStyle::Normal && attr.style != FontStyle::Normal;
         self.synthesize_bold = attr.weight >= FontWeight::DEMIBOLD

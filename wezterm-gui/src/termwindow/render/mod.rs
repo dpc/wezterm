@@ -747,6 +747,7 @@ impl crate::TermWindow {
                     glyphs.push(Rc::new(CachedGlyph {
                         brightness_adjust: 1.0,
                         has_color: false,
+                        is_horizontally_centered: false,
                         texture: None,
                         x_advance: PixelLength::new(metrics.cell_size.width as f64),
                         x_offset: PixelLength::zero(),

@@ -379,6 +379,9 @@ pub struct FontAttributes {
     pub scale: Option<NotNan<f64>>,
     #[dynamic(default)]
     pub assume_emoji_presentation: Option<bool>,
+    /// Center double-width color glyph bitmaps selected from this font.
+    #[dynamic(default)]
+    pub center_double_width_color_glyphs: bool,
 }
 impl_lua_conversion_dynamic!(FontAttributes);
 
@@ -407,6 +410,7 @@ impl FontAttributes {
             freetype_load_flags: None,
             scale: None,
             assume_emoji_presentation: None,
+            center_double_width_color_glyphs: false,
         }
     }
 
@@ -424,6 +428,7 @@ impl FontAttributes {
             freetype_load_flags: None,
             scale: None,
             assume_emoji_presentation: None,
+            center_double_width_color_glyphs: false,
         }
     }
 }
@@ -443,6 +448,7 @@ impl Default for FontAttributes {
             freetype_load_flags: None,
             scale: None,
             assume_emoji_presentation: None,
+            center_double_width_color_glyphs: false,
         }
     }
 }

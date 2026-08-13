@@ -76,6 +76,7 @@ pub struct GlyphKey {
     pub font_idx: usize,
     pub glyph_pos: u32,
     pub num_cells: u8,
+    pub center_double_width_color_glyphs: bool,
     pub style: TextStyle,
     pub followed_by_space: bool,
     pub metric: CellMetricKey,
@@ -92,6 +93,7 @@ pub struct BorrowedGlyphKey<'a> {
     pub font_idx: usize,
     pub glyph_pos: u32,
     pub num_cells: u8,
+    pub center_double_width_color_glyphs: bool,
     pub style: &'a TextStyle,
     pub followed_by_space: bool,
     pub metric: CellMetricKey,
@@ -104,6 +106,7 @@ impl<'a> BorrowedGlyphKey<'a> {
             font_idx: self.font_idx,
             glyph_pos: self.glyph_pos,
             num_cells: self.num_cells,
+            center_double_width_color_glyphs: self.center_double_width_color_glyphs,
             style: self.style.clone(),
             followed_by_space: self.followed_by_space,
             metric: self.metric,
@@ -122,6 +125,7 @@ impl GlyphKeyTrait for GlyphKey {
             font_idx: self.font_idx,
             glyph_pos: self.glyph_pos,
             num_cells: self.num_cells,
+            center_double_width_color_glyphs: self.center_double_width_color_glyphs,
             style: &self.style,
             followed_by_space: self.followed_by_space,
             metric: self.metric,
@@ -160,6 +164,7 @@ impl<'a> std::hash::Hash for dyn GlyphKeyTrait + 'a {
 /// The image data may be None for whitespace glyphs.
 pub struct CachedGlyph {
     pub has_color: bool,
+    pub is_horizontally_centered: bool,
     pub brightness_adjust: f32,
     pub x_offset: PixelLength,
     pub y_offset: PixelLength,
@@ -174,6 +179,7 @@ impl std::fmt::Debug for CachedGlyph {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
         fmt.debug_struct("CachedGlyph")
             .field("has_color", &self.has_color)
+            .field("is_horizontally_centered", &self.is_horizontally_centered)
             .field("x_advance", &self.x_advance)
             .field("x_offset", &self.x_offset)
             .field("y_offset", &self.y_offset)
@@ -636,10 +642,12 @@ impl GlyphCache {
         metrics: &RenderMetrics,
         num_cells: u8,
     ) -> anyhow::Result<Rc<CachedGlyph>> {
+        let center_double_width_color_glyphs = font.center_double_width_color_glyphs(info.font_idx);
         let key = BorrowedGlyphKey {
             font_idx: info.font_idx,
             glyph_pos: info.glyph_pos,
             num_cells: num_cells,
+            center_double_width_color_glyphs,
             style,
             followed_by_space,
             metric: metrics.into(),
@@ -652,7 +660,14 @@ impl GlyphCache {
         }
         metrics::histogram!("glyph_cache.glyph_cache.miss.rate").record(1.);
 
-        let glyph = match self.load_glyph(info, font, followed_by_space, num_cells) {
+        let glyph = match self.load_glyph(
+            info,
+            font,
+            followed_by_space,
+            num_cells,
+            metrics.cell_size.width as usize,
+            center_double_width_color_glyphs,
+        ) {
             Ok(g) => g,
             Err(err) => {
                 if err
@@ -677,6 +692,7 @@ impl GlyphCache {
                 Rc::new(CachedGlyph {
                     brightness_adjust: 1.0,
                     has_color: false,
+                    is_horizontally_centered: false,
                     texture: None,
                     x_advance: PixelLength::zero(),
                     x_offset: PixelLength::zero(),
@@ -705,6 +721,8 @@ impl GlyphCache {
         font: &Rc<LoadedFont>,
         followed_by_space: bool,
         num_cells: u8,
+        rendered_cell_width: usize,
+        center_double_width_color_glyphs: bool,
     ) -> anyhow::Result<Rc<CachedGlyph>> {
         let base_metrics;
         let idx_metrics;
@@ -740,6 +758,7 @@ impl GlyphCache {
         // can happen somehow; see <https://github.com/wezterm/wezterm/issues/1042>
         // so let's treat 0 cells as 1 cell so that we don't try to divide by
         // zero below.
+        let assigned_num_cells = num_cells;
         let num_cells = num_cells.max(1) as f64;
 
         // Maximum width allowed for this glyph based on its unicode width and
@@ -824,6 +843,7 @@ impl GlyphCache {
             CachedGlyph {
                 brightness_adjust: 1.0,
                 has_color: glyph.has_color,
+                is_horizontally_centered: false,
                 texture: None,
                 x_offset: info.x_offset * scale,
                 y_offset: info.y_offset * scale,
@@ -840,7 +860,7 @@ impl GlyphCache {
                 &glyph.data,
             );
 
-            let bearing_x = glyph.bearing_x * scale * metrics_only_scale;
+            let mut bearing_x = glyph.bearing_x * scale * metrics_only_scale;
             // No metrics_only_scale adjustment to bearing_y is needed because
             // the value comes from the rasterized glyph and not from the
             // shaper stage.
@@ -870,11 +890,25 @@ impl GlyphCache {
                 (scale, raw_im)
             };
 
+            let centered_bearing = centered_color_glyph_bearing_x(
+                center_double_width_color_glyphs,
+                info.font_idx,
+                glyph.has_color,
+                assigned_num_cells,
+                rendered_cell_width,
+                raw_im.image_dimensions().0,
+                x_offset,
+            );
+            if let Some(centered_bearing) = centered_bearing {
+                bearing_x = centered_bearing;
+            }
+
             let tex = self.atlas.allocate(&raw_im)?;
 
             let g = CachedGlyph {
                 brightness_adjust,
                 has_color: glyph.has_color,
+                is_horizontally_centered: centered_bearing.is_some(),
                 texture: Some(tex),
                 x_offset,
                 y_offset,
@@ -1374,3 +1408,29 @@ impl GlyphCache {
         self.line_sprite(key, metrics)
     }
 }
+
+fn centered_color_glyph_bearing_x(
+    enabled: bool,
+    font_idx: usize,
+    has_color: bool,
+    num_cells: u8,
+    cell_width: usize,
+    bitmap_width: usize,
+    x_offset: PixelLength,
+) -> Option<PixelLength> {
+    if !enabled || font_idx == 0 || !has_color || num_cells != 2 {
+        return None;
+    }
+
+    let span_width = cell_width as f64 * f64::from(num_cells);
+    let bitmap_width = bitmap_width as f64;
+    if span_width < bitmap_width {
+        return None;
+    }
+
+    let bitmap_left = (span_width - bitmap_width) / 2.0;
+    Some(PixelLength::new(bitmap_left - x_offset.get()))
+}
+
+#[cfg(test)]
+mod test;

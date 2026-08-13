@@ -21,6 +21,10 @@ usually the best available version.
 
 As features stabilize some brief notes about them will accumulate here.
 
+#### Added
+* Added a `center_double_width_color_glyphs` font attribute to opt in to
+  centering fallback color glyph bitmaps within their two-cell span.
+
 #### Changed
 * DECRQCRA is now disabled by default to prevent silent screen scraping.
   Set `enable_checksum_rectangular_area = true` to re-enable it.
@@ -2543,5 +2547,4 @@ font_hinting = "Full" # None, Vertical, VerticalSubpixel, Full
 * `wezterm imgcat /some/image.png` to display images inline in the terminal using the iTerm2 image protocol
 * IME support on macOS and Windows systems
 * Automatic fallback to software rendering if no GPU is available (eg: certain types of remote desktop sessions)
-
 

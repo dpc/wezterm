@@ -498,6 +498,8 @@ struct LuaFontAttributes {
     pub scale: Option<NotNan<f64>>,
     #[dynamic(default)]
     pub assume_emoji_presentation: Option<bool>,
+    #[dynamic(default)]
+    pub center_double_width_color_glyphs: bool,
 }
 impl<'lua> FromLua<'lua> for LuaFontAttributes {
     fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> Result<Self, mlua::Error> {
@@ -585,6 +587,7 @@ fn font<'lua>(
             },
             scale: attrs.scale,
             assume_emoji_presentation: attrs.assume_emoji_presentation,
+            center_double_width_color_glyphs: attrs.center_double_width_color_glyphs,
         }));
 
     Ok(text_style)
@@ -634,6 +637,7 @@ fn font_with_fallback<'lua>(
                 },
                 scale: attrs.scale,
                 assume_emoji_presentation: attrs.assume_emoji_presentation,
+                center_double_width_color_glyphs: attrs.center_double_width_color_glyphs,
             }));
     }
 
@@ -866,6 +870,31 @@ pub fn add_to_config_reload_watch_list<'lua>(
 mod test {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn font_with_fallback_preserves_color_glyph_centering_per_font() -> anyhow::Result<()> {
+        let lua = make_lua_context(Path::new("testing"))?;
+        let style: TextStyle = lua
+            .load(
+                r#"
+                local wezterm = require 'wezterm'
+                return wezterm.font_with_fallback {
+                  'Primary',
+                  {
+                    family = 'Centered Emoji',
+                    center_double_width_color_glyphs = true,
+                  },
+                  'Other Fallback',
+                }
+                "#,
+            )
+            .eval()?;
+
+        assert!(!style.font[0].center_double_width_color_glyphs);
+        assert!(style.font[1].center_double_width_color_glyphs);
+        assert!(!style.font[2].center_double_width_color_glyphs);
+        Ok(())
+    }
 
     #[test]
     fn can_register_and_emit_multiple_events() -> anyhow::Result<()> {
