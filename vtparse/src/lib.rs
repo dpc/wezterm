@@ -313,6 +313,10 @@ const MAX_OSC: usize = 64;
 const MAX_PARAMS: usize = 256;
 
 struct OscState {
+    /// Oversize OSC5522 packets are consumed but never treated as a valid prefix.
+    clipboard_overflow: bool,
+    /// Generic OSC ignores controls; OSC5522 must reject rather than normalize them.
+    ignored_control: bool,
     #[cfg(any(feature = "std", feature = "alloc"))]
     buffer: Vec<u8>,
     #[cfg(not(any(feature = "std", feature = "alloc")))]
@@ -323,7 +327,52 @@ struct OscState {
 }
 
 impl OscState {
+    fn is_clipboard(&self) -> bool {
+        (self.num_params == 1 && self.buffer.as_slice() == b"5522")
+            || (self.num_params >= 2
+                && self.param_indices[0] == 4
+                && self.buffer.starts_with(b"5522"))
+    }
+
+    fn dispatch(&self, actor: &mut dyn VTActor, invalid: bool) {
+        if self.is_clipboard() && (invalid || self.clipboard_overflow || self.ignored_control) {
+            let end = if self.num_params >= 3 {
+                self.param_indices[1]
+            } else {
+                self.buffer.len()
+            };
+            actor.osc_dispatch(&[b"5522", &self.buffer[4..end], b"", b"invalid"]);
+        } else if self.num_params == 0 {
+            actor.osc_dispatch(&[]);
+        } else {
+            let mut params: [&[u8]; MAX_OSC] = [b""; MAX_OSC];
+            let mut offset = 0usize;
+            let mut slice = self.buffer.as_slice();
+            let limit = self.num_params.min(MAX_OSC);
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..limit - 1 {
+                let (a, b) = slice.split_at(self.param_indices[i] - offset);
+                params[i] = a;
+                slice = b;
+                offset = self.param_indices[i];
+            }
+            params[limit - 1] = slice;
+            actor.osc_dispatch(&params[0..limit]);
+        }
+    }
+
     fn put(&mut self, param: char) {
+        if self.clipboard_overflow {
+            return;
+        }
+        if self.num_params >= 2
+            && self.param_indices[0] == 4
+            && self.buffer.starts_with(b"5522")
+            && self.buffer.len() >= 128 * 1024
+        {
+            self.clipboard_overflow = true;
+            return;
+        }
         if param == ';' {
             match self.num_params {
                 MAX_OSC => {
@@ -360,6 +409,8 @@ impl OscState {
 /// The virtual terminal parser.  It works together with an implementation of `VTActor`.
 pub struct VTParser {
     state: State,
+    /// OSC5522 requires the complete ESC-backslash terminator before dispatch.
+    pending_clipboard_st: bool,
 
     intermediates: [u8; MAX_INTERMEDIATES],
     num_intermediates: usize,
@@ -448,6 +499,7 @@ impl VTParser {
 
         Self {
             state: State::Ground,
+            pending_clipboard_st: false,
             utf8_return_state: State::Ground,
 
             intermediates: [0, 0],
@@ -455,6 +507,8 @@ impl VTParser {
             ignored_excess_intermediates: false,
 
             osc: OscState {
+                clipboard_overflow: false,
+                ignored_control: false,
                 buffer: Vec::new(),
                 param_indices,
                 num_params: 0,
@@ -527,7 +581,9 @@ impl VTParser {
             Action::Clear => {
                 self.num_intermediates = 0;
                 self.ignored_excess_intermediates = false;
-                self.osc.num_params = 0;
+                if !self.pending_clipboard_st {
+                    self.osc.num_params = 0;
+                }
                 self.osc.full = false;
                 self.num_params = 0;
                 self.params_full = false;
@@ -536,8 +592,10 @@ impl VTParser {
                 {
                     self.apc_data.clear();
                     self.apc_data.shrink_to_fit();
-                    self.osc.buffer.clear();
-                    self.osc.buffer.shrink_to_fit();
+                    if !self.pending_clipboard_st {
+                        self.osc.buffer.clear();
+                        self.osc.buffer.shrink_to_fit();
+                    }
                 }
             }
             Action::Collect => {
@@ -610,6 +668,8 @@ impl VTParser {
             }
             Action::Unhook => actor.dcs_unhook(),
             Action::OscStart => {
+                self.osc.clipboard_overflow = false;
+                self.osc.ignored_control = false;
                 self.osc.buffer.clear();
                 #[cfg(any(feature = "std", feature = "alloc"))]
                 self.osc.buffer.shrink_to_fit();
@@ -619,22 +679,10 @@ impl VTParser {
             Action::OscPut => self.osc.put(param as char),
 
             Action::OscEnd => {
-                if self.osc.num_params == 0 {
-                    actor.osc_dispatch(&[]);
+                if self.osc.is_clipboard() && param == 0x1b {
+                    self.pending_clipboard_st = true;
                 } else {
-                    let mut params: [&[u8]; MAX_OSC] = [b""; MAX_OSC];
-                    let mut offset = 0usize;
-                    let mut slice = self.osc.buffer.as_slice();
-                    let limit = self.osc.num_params.min(MAX_OSC);
-                    #[allow(clippy::needless_range_loop)]
-                    for i in 0..limit - 1 {
-                        let (a, b) = slice.split_at(self.osc.param_indices[i] - offset);
-                        params[i] = a;
-                        slice = b;
-                        offset = self.osc.param_indices[i];
-                    }
-                    params[limit - 1] = slice;
-                    actor.osc_dispatch(&params[0..limit]);
+                    self.osc.dispatch(actor, !matches!(param, 0x07 | 0x9c));
                 }
             }
 
@@ -698,7 +746,7 @@ impl VTParser {
                 if action == Action::Execute
                     || (state != self.utf8_return_state && state != State::Utf8Sequence)
                 {
-                    self.action(lookup_exit(self.utf8_return_state), 0, actor);
+                    self.action(lookup_exit(self.utf8_return_state), byte, actor);
                     self.action(action, byte, actor);
                     self.action(lookup_entry(state), 0, actor);
                     self.utf8_return_state = self.state;
@@ -720,6 +768,22 @@ impl VTParser {
     /// methods on the provided `actor`.
     #[inline(always)]
     pub fn parse_byte(&mut self, byte: u8, actor: &mut dyn VTActor) {
+        if self.pending_clipboard_st {
+            self.pending_clipboard_st = false;
+            self.osc.dispatch(actor, byte != b'\\');
+            if byte == b'\\' {
+                self.state = State::Ground;
+                return;
+            }
+            // The ESC belongs to the next escape sequence, not to this canceled
+            // clipboard packet. Continue its normal escape-state processing.
+        }
+        if self.state == State::OscString
+            && (byte < 0x20 || byte == 0x7f)
+            && !matches!(byte, 0x07 | 0x18 | 0x1a | 0x1b)
+        {
+            self.osc.ignored_control = true;
+        }
         // While in utf-8 parsing mode, co-opt the vt state
         // table and instead use the utf-8 state table from the
         // parser.  It will drop us back into the Ground state
@@ -733,7 +797,7 @@ impl VTParser {
 
         if state != self.state {
             if state != State::Utf8Sequence {
-                self.action(lookup_exit(self.state), 0, actor);
+                self.action(lookup_exit(self.state), byte, actor);
             }
             self.action(action, byte, actor);
             self.action(lookup_entry(state), byte, actor);

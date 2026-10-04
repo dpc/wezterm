@@ -122,6 +122,8 @@ pub enum LocalPaneConnectionState {
 }
 
 pub struct LocalPane {
+    /// Prepared before mux reader startup; late O_NONBLOCK cannot wake blocked reads.
+    cancellable_writes: bool,
     pane_id: PaneId,
     terminal: Mutex<Terminal>,
     process: Mutex<ProcessState>,
@@ -242,6 +244,7 @@ impl Pane for LocalPane {
     }
 
     fn kill(&self) {
+        self.pty.lock().cancel_writes();
         let mut proc = self.process.lock();
         log::debug!(
             "killing process in pane {}, state is {:?}",
@@ -374,6 +377,38 @@ impl Pane for LocalPane {
     fn set_clipboard(&self, clipboard: &Arc<dyn Clipboard>) {
         self.terminal.lock().set_clipboard(clipboard);
     }
+    fn set_mime_clipboard(
+        &self,
+        handler: Arc<dyn wezterm_term::clipboard::ClipboardHandler>,
+    ) -> bool {
+        if !self.cancellable_writes {
+            return false;
+        }
+        self.terminal.lock().set_mime_clipboard(handler);
+        true
+    }
+
+    fn set_clipboard_byte_limit(&self, limit: usize) {
+        self.terminal.lock().set_clipboard_byte_limit(limit);
+    }
+
+    fn send_clipboard_response(&self, response: wezterm_term::clipboard::ClipboardResponse) {
+        self.terminal.lock().send_clipboard_response(response);
+    }
+
+    fn reserve_clipboard_response(&self) -> Option<wezterm_term::ClipboardQueuePermit> {
+        self.terminal.lock().reserve_clipboard_response()
+    }
+
+    fn send_reserved_clipboard_response(
+        &self,
+        response: wezterm_term::clipboard::ClipboardResponse,
+        permit: wezterm_term::ClipboardQueuePermit,
+    ) {
+        self.terminal
+            .lock()
+            .send_reserved_clipboard_response(response, permit);
+    }
 
     fn set_download_handler(&self, handler: &Arc<dyn DownloadHandler>) {
         self.terminal.lock().set_download_handler(handler);
@@ -431,6 +466,16 @@ impl Pane for LocalPane {
             let w: &mut dyn std::io::Write = writer;
             w
         })
+    }
+
+    fn enqueue_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        Mux::get().record_input_for_current_identity();
+        self.terminal.lock().enqueue_input(bytes)?;
+        Ok(())
+    }
+
+    fn send_composed_text(&self, text: &str) -> anyhow::Result<()> {
+        self.enqueue_input(text.as_bytes())
     }
 
     fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
@@ -1012,6 +1057,11 @@ impl LocalPane {
         domain_id: DomainId,
         command_description: String,
     ) -> Self {
+        // Prepare native Linux I/O before add_pane starts its reader. Actual
+        // OSC5522 advertisement still requires an attached Wayland GUI backend.
+        let cancellable_writes = cfg!(target_os = "linux")
+            && configuration().enable_wayland
+            && matches!(pty.enable_cancellable_writes(), Ok(true));
         let (process, signaller, pid) = split_child(process);
 
         terminal.set_device_control_handler(Box::new(LocalPaneDCSHandler {
@@ -1021,6 +1071,7 @@ impl LocalPane {
         terminal.set_notification_handler(Box::new(LocalPaneNotifHandler { pane_id }));
 
         Self {
+            cancellable_writes,
             pane_id,
             terminal: Mutex::new(terminal),
             process: Mutex::new(ProcessState::Running {
@@ -1154,6 +1205,7 @@ impl LocalPane {
 
 impl Drop for LocalPane {
     fn drop(&mut self) {
+        self.pty.lock().cancel_writes();
         // Avoid lingering zombies if we can, but don't block forever.
         // <https://github.com/wezterm/wezterm/issues/558>
         if let ProcessState::Running { signaller, .. } = &mut *self.process.lock() {

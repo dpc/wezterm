@@ -23,7 +23,7 @@ use smithay_client_toolkit::shm::slot::SlotPool;
 use smithay_client_toolkit::shm::{Shm, ShmHandler};
 use smithay_client_toolkit::subcompositor::SubcompositorState;
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_data_device, delegate_output, delegate_pointer, delegate_primary_selection, delegate_registry, delegate_seat, delegate_shm, delegate_subcompositor, delegate_xdg_shell, delegate_xdg_window, registry_handlers
+    delegate_compositor, delegate_output, delegate_pointer, delegate_primary_selection, delegate_registry, delegate_seat, delegate_shm, delegate_subcompositor, delegate_xdg_shell, delegate_xdg_window, registry_handlers
 };
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::GlobalList;
@@ -76,7 +76,7 @@ pub(super) struct WaylandState {
     pub(super) copy_paste_offer: Arc<Mutex<CopyPasteOffer>>,
     /// Outgoing regular clipboard: our data source while we own clipboard selection.
     /// Dropped when another Wayland client takes ownership.
-    pub(super) copy_paste_source: Option<(CopyPasteSource, String)>,
+    pub(super) copy_paste_source: Option<(CopyPasteSource, crate::clipboard::ClipboardData)>,
     /// Protocol manager for primary selection.
     /// None if unsupported by compositor.
     pub(super) primary_selection_manager: Option<PrimarySelectionManagerState>,
@@ -85,7 +85,8 @@ pub(super) struct WaylandState {
     pub(super) primary_selection_device: Option<PrimarySelectionDevice>,
     /// Outgoing primary selection: our source while we own primary selection.
     /// Dropped when another client takes ownership.
-    pub(super) primary_selection_source: Option<(PrimarySelectionSource, String)>,
+    pub(super) primary_selection_source:
+        Option<(PrimarySelectionSource, crate::clipboard::ClipboardData)>,
 
     pub(super) shm: Shm,
     pub(super) mem_pool: RefCell<SlotPool>,
@@ -189,7 +190,17 @@ delegate_subcompositor!(WaylandState);
 
 delegate_seat!(WaylandState);
 
-delegate_data_device!(WaylandState);
+// Keep SCTK's normal dispatch, except wl_data_device itself: pinned SCTK0.19.2
+// omits the selection callback for selection(NULL). data_device.rs forwards it.
+delegate_dispatch!(WaylandState: [
+    wayland_client::protocol::wl_data_device_manager::WlDataDeviceManager: GlobalData
+] => DataDeviceManagerState);
+delegate_dispatch!(WaylandState: [
+    wayland_client::protocol::wl_data_offer::WlDataOffer: smithay_client_toolkit::data_device_manager::data_offer::DataOfferData
+] => DataDeviceManagerState);
+delegate_dispatch!(WaylandState: [
+    wayland_client::protocol::wl_data_source::WlDataSource: smithay_client_toolkit::data_device_manager::data_source::DataSourceData
+] => DataDeviceManagerState);
 
 delegate_pointer!(WaylandState, pointer: [PointerUserData]);
 

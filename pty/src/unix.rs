@@ -1,4 +1,6 @@
 //! Working with pseudo-terminals
+#[cfg(test)]
+mod tests;
 
 use crate::{Child, CommandBuilder, MasterPty, PtyPair, PtySize, PtySystem, SlavePty};
 use anyhow::{bail, Error};
@@ -12,6 +14,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{io, mem, ptr};
 
 pub use std::os::unix::io::RawFd;
@@ -49,12 +53,18 @@ fn openpty(size: PtySize) -> anyhow::Result<(UnixMasterPty, UnixSlavePty)> {
     let tty_name = tty_name(slave);
 
     let master = UnixMasterPty {
-        fd: PtyFd(unsafe { FileDescriptor::from_raw_fd(master) }),
+        fd: PtyFd(
+            unsafe { FileDescriptor::from_raw_fd(master) },
+            Arc::new(IoControl::default()),
+        ),
         took_writer: RefCell::new(false),
         tty_name,
     };
     let slave = UnixSlavePty {
-        fd: PtyFd(unsafe { FileDescriptor::from_raw_fd(slave) }),
+        fd: PtyFd(
+            unsafe { FileDescriptor::from_raw_fd(slave) },
+            Arc::new(IoControl::default()),
+        ),
     };
 
     // Ensure that these descriptors will get closed when we execute
@@ -77,7 +87,18 @@ impl PtySystem for UnixPtySystem {
     }
 }
 
-struct PtyFd(pub FileDescriptor);
+/// State shared by all descriptors referencing the native master.
+#[derive(Default)]
+struct IoControl {
+    /// Nonblocking kernel descriptors exposed through blocking Rust APIs.
+    enabled: AtomicBool,
+    /// Actual pane teardown, not mode-off or temporary backpressure.
+    cancelled: AtomicBool,
+    /// Fatal stream failure prevents an EOF suffix or subsequent input.
+    failed: AtomicBool,
+}
+
+struct PtyFd(pub FileDescriptor, Arc<IoControl>);
 impl std::ops::Deref for PtyFd {
     type Target = FileDescriptor;
     fn deref(&self) -> &FileDescriptor {
@@ -92,15 +113,39 @@ impl std::ops::DerefMut for PtyFd {
 
 impl Read for PtyFd {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        match self.0.read(buf) {
-            Err(ref e) if e.raw_os_error() == Some(libc::EIO) => {
-                // EIO indicates that the slave pty has been closed.
-                // Treat this as EOF so that std::io::Read::read_to_string
-                // and similar functions gracefully terminate when they
-                // encounter this condition
-                Ok(0)
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.1.enabled.load(Ordering::Acquire) && self.1.cancelled.load(Ordering::Acquire) {
+                return Ok(0);
             }
-            x => x,
+            match self.0.read(buf) {
+                Err(ref e) if e.raw_os_error() == Some(libc::EIO) => {
+                    // EIO indicates that the slave pty has been closed.
+                    // Treat this as EOF so that std::io::Read::read_to_string
+                    // and similar functions gracefully terminate when they
+                    // encounter this condition
+                    return Ok(0);
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    let events = wait_ready(self.0.as_raw_fd(), libc::POLLIN)?;
+                    if events & (libc::POLLHUP | libc::POLLERR) != 0 {
+                        // Drain any final bytes once, without spinning on HUP.
+                        return match self.0.read(buf) {
+                            Err(e)
+                                if e.kind() == io::ErrorKind::WouldBlock
+                                    || e.raw_os_error() == Some(libc::EIO) =>
+                            {
+                                Ok(0)
+                            }
+                            result => result,
+                        };
+                    }
+                }
+                x => return x,
+            }
         }
     }
 }
@@ -306,6 +351,32 @@ struct UnixMasterPty {
     tty_name: Option<PathBuf>,
 }
 
+impl Drop for UnixMasterPty {
+    fn drop(&mut self) {
+        self.cancel_writes();
+    }
+}
+
+fn wait_ready(fd: RawFd, events: i16) -> io::Result<i16> {
+    let mut pfd = libc::pollfd {
+        fd,
+        events,
+        revents: 0,
+    };
+    let result = unsafe { libc::poll(&mut pfd, 1, 100) };
+    if result < 0 {
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::Interrupted {
+            return Ok(0);
+        }
+        return Err(err);
+    }
+    if pfd.revents & libc::POLLNVAL != 0 {
+        return Err(io::ErrorKind::BrokenPipe.into());
+    }
+    Ok(pfd.revents)
+}
+
 /// Represents the slave end of a pty.
 /// The file descriptor will be closed when the Pty is dropped.
 struct UnixSlavePty {
@@ -350,7 +421,7 @@ impl MasterPty for UnixMasterPty {
     }
 
     fn try_clone_reader(&self) -> Result<Box<dyn Read + Send>, Error> {
-        let fd = PtyFd(self.fd.try_clone()?);
+        let fd = PtyFd(self.fd.try_clone()?, self.fd.1.clone());
         Ok(Box::new(fd))
     }
 
@@ -359,8 +430,30 @@ impl MasterPty for UnixMasterPty {
             anyhow::bail!("cannot take writer more than once");
         }
         *self.took_writer.borrow_mut() = true;
-        let fd = PtyFd(self.fd.try_clone()?);
+        let fd = PtyFd(self.fd.try_clone()?, self.fd.1.clone());
         Ok(Box::new(UnixMasterWriter { fd }))
+    }
+
+    fn enable_cancellable_writes(&self) -> Result<bool, Error> {
+        // dup() shares O_NONBLOCK. PtyFd::read deliberately emulates blocking
+        // reads for every existing/future clone of this master.
+        if self.fd.1.cancelled.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        if self.fd.1.enabled.load(Ordering::Acquire) {
+            return Ok(true);
+        }
+        let fd = self.fd.0.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(io::Error::last_os_error().into());
+        }
+        self.fd.1.enabled.store(true, Ordering::Release);
+        Ok(true)
+    }
+
+    fn cancel_writes(&self) {
+        self.fd.1.cancelled.store(true, Ordering::Release);
     }
 
     fn as_raw_fd(&self) -> Option<RawFd> {
@@ -392,6 +485,10 @@ struct UnixMasterWriter {
 
 impl Drop for UnixMasterWriter {
     fn drop(&mut self) {
+        if self.fd.1.enabled.load(Ordering::Acquire) {
+            // Teardown must not block or append bytes to a canceled/failed frame.
+            return;
+        }
         let mut t: libc::termios = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
         if unsafe { libc::tcgetattr(self.fd.0.as_raw_fd(), &mut t) } == 0 {
             // EOF is only interpreted after a newline, so if it is set,
@@ -406,7 +503,42 @@ impl Drop for UnixMasterWriter {
 
 impl Write for UnixMasterWriter {
     fn write(&mut self, buf: &[u8]) -> Result<usize, io::Error> {
-        self.fd.write(buf)
+        if !self.fd.1.enabled.load(Ordering::Acquire) {
+            return self.fd.write(buf);
+        }
+        loop {
+            if self.fd.1.cancelled.load(Ordering::Acquire) {
+                return Err(io::ErrorKind::ConnectionAborted.into());
+            }
+            if self.fd.1.failed.load(Ordering::Acquire) {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            match self.fd.write(buf) {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    match wait_ready(self.fd.0.as_raw_fd(), libc::POLLOUT) {
+                        Ok(events) if events & (libc::POLLHUP | libc::POLLERR) == 0 => continue,
+                        Ok(_) => {
+                            self.fd.1.failed.store(true, Ordering::Release);
+                            return Err(io::ErrorKind::BrokenPipe.into());
+                        }
+                        Err(e) => {
+                            self.fd.1.failed.store(true, Ordering::Release);
+                            return Err(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.fd.1.failed.store(true, Ordering::Release);
+                    return Err(e);
+                }
+                Ok(0) if !buf.is_empty() => {
+                    self.fd.1.failed.store(true, Ordering::Release);
+                    return Err(io::ErrorKind::WriteZero.into());
+                }
+                result => return result,
+            }
+        }
     }
     fn flush(&mut self) -> Result<(), io::Error> {
         self.fd.flush()

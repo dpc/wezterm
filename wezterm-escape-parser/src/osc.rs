@@ -1,6 +1,6 @@
 use crate::color::SrgbaTuple;
 pub use crate::hyperlink::Hyperlink;
-use crate::{Result, bail, ensure, format_err};
+use crate::{bail, ensure, format_err, Result};
 use base64::Engine;
 use bitflags::bitflags;
 use core::fmt::{Display, Error as FmtError, Formatter, Result as FmtResult};
@@ -31,6 +31,8 @@ impl Display for ColorOrQuery {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperatingSystemCommand {
+    /// Clipboard protocol bytes; debug formatting never exposes credentials or data.
+    Clipboard5522(Clipboard5522),
     SetIconNameAndWindowTitle(String),
     SetWindowTitle(String),
     SetWindowTitleSun(String),
@@ -52,6 +54,20 @@ pub enum OperatingSystemCommand {
     ConEmuProgress(Progress),
 
     Unspecified(Vec<Vec<u8>>),
+}
+
+/// An opaque OSC5522 packet, including malformed packets, with redacted diagnostics.
+#[derive(Clone, PartialEq)]
+pub struct Clipboard5522(pub Vec<Vec<u8>>);
+
+impl core::fmt::Debug for Clipboard5522 {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(
+            f,
+            "Clipboard5522({} bytes)",
+            self.0.iter().map(Vec::len).sum::<usize>()
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromPrimitive)]
@@ -153,6 +169,11 @@ impl Display for Selection {
 
 impl OperatingSystemCommand {
     pub fn parse(osc: &[&[u8]]) -> Self {
+        if osc.first() == Some(&b"5522".as_slice()) {
+            return Self::Clipboard5522(Clipboard5522(
+                osc.iter().skip(1).map(|part| part.to_vec()).collect(),
+            ));
+        }
         Self::internal_parse(osc).unwrap_or_else(|err| {
             let mut vec = Vec::new();
             for slice in osc {
@@ -561,6 +582,12 @@ impl Display for OperatingSystemCommand {
 
         use self::OperatingSystemCommand::*;
         match self {
+            Clipboard5522(packet) => {
+                write!(f, "5522")?;
+                for part in &packet.0 {
+                    write!(f, ";{}", String::from_utf8_lossy(part))?;
+                }
+            }
             SetIconNameAndWindowTitle(title) => single_string!(SetIconNameAndWindowTitle, title),
             SetWindowTitle(title) => single_string!(SetWindowTitle, title),
             SetWindowTitleSun(title) => single_string!(SetWindowTitleSun, title),

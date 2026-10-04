@@ -101,6 +101,15 @@ pub trait MasterPty: Downcast + Send {
     /// It is invalid to take the writer more than once.
     fn take_writer(&self) -> Result<Box<dyn std::io::Write + Send>, Error>;
 
+    /// Opts into interruptible native I/O without imposing a live stall deadline.
+    /// Returns false when this PTY cannot provide cancellation-safe writes.
+    fn enable_cancellable_writes(&self) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    /// Interrupts opted-in I/O on actual pane teardown, independent of writer locks.
+    fn cancel_writes(&self) {}
+
     /// If applicable to the type of the tty, return the local process id
     /// of the process group or session leader
     #[cfg(unix)]

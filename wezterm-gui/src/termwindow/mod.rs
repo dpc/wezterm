@@ -73,6 +73,7 @@ pub mod box_model;
 pub mod charselect;
 pub mod clipboard;
 pub mod keyevent;
+mod mime_clipboard;
 pub mod modal;
 mod mouseevent;
 pub mod palette;
@@ -363,6 +364,10 @@ enum EventState {
 }
 
 pub struct TermWindow {
+    /// Native OSC5522 attachments; never installed on remote mux panes.
+    mime_clipboards: HashMap<PaneId, Arc<mime_clipboard::MimeClipboard>>,
+    /// Observed active pane, including overlay transitions.
+    mime_active_pane: Option<PaneId>,
     pub window: Option<Window>,
     pub config: ConfigHandle,
     pub config_overrides: wezterm_dynamic::Value,
@@ -526,6 +531,9 @@ impl TermWindow {
     }
 
     fn focus_changed(&mut self, focused: bool, window: &Window) {
+        if !focused {
+            self.revoke_mime_clipboards();
+        }
         log::trace!("Setting focus to {:?}", focused);
         self.focused = if focused { Some(Instant::now()) } else { None };
         self.quad_generation += 1;
@@ -726,6 +734,8 @@ impl TermWindow {
             last_scroll_info: RenderableDimensions::default(),
             tab_state: RefCell::new(HashMap::new()),
             pane_state: RefCell::new(HashMap::new()),
+            mime_clipboards: HashMap::new(),
+            mime_active_pane: None,
             current_mouse_buttons: vec![],
             current_mouse_capture: None,
             last_mouse_click: None,
@@ -835,6 +845,7 @@ impl TermWindow {
         )
         .await?;
         tw.borrow_mut().window.replace(window.clone());
+        tw.borrow_mut().sync_mime_clipboards();
 
         Self::apply_icon(&window)?;
 
@@ -904,9 +915,11 @@ impl TermWindow {
         event: WindowEvent,
         window: &Window,
     ) -> anyhow::Result<bool> {
+        self.sync_mime_clipboards();
         log::debug!("{event:?}");
         match event {
             WindowEvent::Destroyed => {
+                self.detach_mime_clipboards();
                 // Ensure that we cancel any overlays we had running, so
                 // that the mux can empty out, otherwise the mux keeps
                 // the TermWindow alive via the frontend even though
@@ -2743,7 +2756,7 @@ impl TermWindow {
             ActivateWindowRelativeNoWrap(n) => {
                 self.activate_window_relative(*n, false)?;
             }
-            SendString(s) => pane.writer().write_all(s.as_bytes())?,
+            SendString(s) => pane.enqueue_input(s.as_bytes())?,
             SendKey(key) => {
                 use keyevent::Key;
                 let mods = key.mods;
@@ -3620,6 +3633,7 @@ impl TermWindow {
 
 impl Drop for TermWindow {
     fn drop(&mut self) {
+        self.detach_mime_clipboards();
         // Mark the mux subscription as dead.
         // (will actually unsubscribe on the next notif from mux)
         self.mux_subscription_dead.store(true, Ordering::Relaxed);

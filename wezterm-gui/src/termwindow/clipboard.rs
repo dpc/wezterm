@@ -35,6 +35,9 @@ impl TermWindow {
             ClipboardPasteSource::Clipboard => Clipboard::Clipboard,
             ClipboardPasteSource::PrimarySelection => Clipboard::PrimarySelection,
         };
+        if self.paste_mime_clipboard(pane, clipboard) {
+            return;
+        }
         let future = window.get_clipboard(clipboard);
         promise::spawn::spawn(async move {
             if let Ok(clip) = future.await {

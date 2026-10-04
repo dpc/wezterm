@@ -13,6 +13,57 @@ use crate::wayland::SurfaceUserData;
 use super::copy_and_paste::write_selection_to_pipe;
 use super::drag_and_drop::{DragAndDropSession, WindowAndPipe};
 use super::state::WaylandState;
+use smithay_client_toolkit::data_device_manager::data_device::DataDeviceData;
+use smithay_client_toolkit::data_device_manager::data_offer::DataOfferData;
+use smithay_client_toolkit::data_device_manager::DataDeviceManagerState;
+use wayland_client::protocol::wl_data_device;
+use wayland_client::protocol::wl_data_offer::WlDataOffer;
+use wayland_client::{Connection, Dispatch, QueueHandle};
+#[cfg(test)]
+mod clipboard_tests;
+
+fn dispatch_with_clear_notification<S>(
+    state: &mut S,
+    event: wl_data_device::Event,
+    delegate: impl FnOnce(&mut S, wl_data_device::Event),
+    clear: impl FnOnce(&mut S),
+) {
+    let cleared = matches!(&event, wl_data_device::Event::Selection { id: None });
+    delegate(state, event);
+    if cleared {
+        clear(state);
+    }
+}
+
+impl Dispatch<WlDataDevice, DataDeviceData> for WaylandState {
+    wayland_client::event_created_child!(WaylandState, WlDataDevice, [
+        0 => (WlDataOffer, DataOfferData::default())
+    ]);
+
+    fn event(
+        state: &mut Self,
+        device: &WlDataDevice,
+        event: wl_data_device::Event,
+        data: &DataDeviceData,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        dispatch_with_clear_notification(
+            state,
+            event,
+            |state, event| {
+                <DataDeviceManagerState as Dispatch<WlDataDevice, DataDeviceData, Self>>::event(
+                    state, device, event, data, conn, qh,
+                );
+            },
+            |state| {
+                // SCTK has now destroyed its previous selection object. It
+                // omits the NULL callback; revoke after its cache update.
+                DataDeviceHandler::selection(state, conn, qh, device);
+            },
+        );
+    }
+}
 
 pub(super) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(super) const URI_MIME_TYPE: &str = "text/uri-list";
@@ -113,10 +164,7 @@ impl DataDeviceHandler for WaylandState {
                 return;
             }
         };
-        if let Some(offer) = offer {
-            if !offer.with_mime_types(|mime_types| mime_types.iter().any(|s| s == TEXT_MIME_TYPE)) {
-                return;
-            }
+        {
             // The compositor sends the selection event once per client.
             // ref: https://github.com/wezterm/wezterm/issues/6685
             self.copy_paste_offer
@@ -194,15 +242,13 @@ impl DataSourceHandler for WaylandState {
         mime: String,
         fd: WritePipe,
     ) {
-        if mime != TEXT_MIME_TYPE {
-            return;
-        }
-
         if let Some((cp_source, data)) = &self.copy_paste_source {
             if cp_source.inner() != source {
                 return;
             }
-            write_selection_to_pipe(fd, data);
+            if let Some(bytes) = data.get(&mime) {
+                write_selection_to_pipe(fd, bytes.clone());
+            }
         }
     }
 
@@ -212,7 +258,13 @@ impl DataSourceHandler for WaylandState {
         _qh: &wayland_client::QueueHandle<Self>,
         source: &wayland_client::protocol::wl_data_source::WlDataSource,
     ) {
-        self.copy_paste_source.take();
+        if self
+            .copy_paste_source
+            .as_ref()
+            .is_some_and(|(current, _)| current.inner() == source)
+        {
+            self.copy_paste_source.take();
+        }
         source.destroy();
     }
 

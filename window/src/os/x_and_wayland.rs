@@ -401,6 +401,37 @@ impl WindowOps for Window {
             Self::Wayland(w) => w.get_clipboard(clipboard),
         }
     }
+
+    fn supports_mime_clipboard(&self) -> bool {
+        match self {
+            #[cfg(feature = "wayland")]
+            Self::Wayland(_) => true,
+            _ => false,
+        }
+    }
+
+    fn clipboard_offer(
+        &self,
+        clipboard: Clipboard,
+    ) -> Future<std::sync::Arc<dyn crate::clipboard::ClipboardOffer>> {
+        match self {
+            #[cfg(feature = "wayland")]
+            Self::Wayland(w) => w.clipboard_offer(clipboard),
+            _ => Future::err(crate::clipboard::ClipboardError::Unsupported.into()),
+        }
+    }
+
+    fn set_mime_clipboard(
+        &self,
+        clipboard: Clipboard,
+        data: crate::clipboard::ClipboardData,
+    ) -> Future<()> {
+        match self {
+            #[cfg(feature = "wayland")]
+            Self::Wayland(w) => w.set_mime_clipboard(clipboard, data),
+            _ => Future::err(crate::clipboard::ClipboardError::Unsupported.into()),
+        }
+    }
     fn set_clipboard(&self, clipboard: Clipboard, text: String) {
         match self {
             Self::X11(x) => x.set_clipboard(clipboard, text),

@@ -22,6 +22,8 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+mod writer_tests;
 use wezterm_term::TerminalSize;
 
 static DOMAIN_ID: ::std::sync::atomic::AtomicUsize = ::std::sync::atomic::AtomicUsize::new(0);
@@ -495,24 +497,86 @@ impl LocalDomain {
 /// awkward at the moment.
 #[derive(Clone)]
 pub(crate) struct WriterWrapper {
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    writer: Arc<Mutex<SharedWriter>>,
+    /// Called after releasing serialization, once, on a real transport failure.
+    failure_notice: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+struct SharedWriter {
+    /// The single native sink shared by synchronous API and async terminal input.
+    writer: Box<dyn Write + Send>,
+    /// A failed/truncated stream must never accept additional bytes.
+    failed: bool,
 }
 
 impl WriterWrapper {
     pub fn new(writer: Box<dyn Write + Send>) -> Self {
         Self {
-            writer: Arc::new(Mutex::new(writer)),
+            writer: Arc::new(Mutex::new(SharedWriter {
+                writer,
+                failed: false,
+            })),
+            failure_notice: None,
         }
+    }
+
+    fn with_failure_notice(writer: Box<dyn Write + Send>, pane_id: PaneId) -> Self {
+        let mut wrapper = Self::new(writer);
+        wrapper.failure_notice = Some(Arc::new(move || {
+            crate::localpane::emit_output_for_pane(
+                pane_id,
+                "\r\n[PTY input failed; close this pane and start another.]\r\n",
+            );
+        }));
+        wrapper
+    }
+
+    fn access<T>(
+        &self,
+        f: impl FnOnce(&mut dyn Write) -> std::io::Result<T>,
+    ) -> std::io::Result<T> {
+        let mut shared = self.writer.lock();
+        if shared.failed {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        let result = f(&mut *shared.writer);
+        let failed = result.as_ref().err().is_some_and(|e| {
+            !matches!(
+                e.kind(),
+                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+            )
+        });
+        let notice = failed
+            && result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.kind() != std::io::ErrorKind::ConnectionAborted);
+        if failed {
+            shared.failed = true;
+        }
+        drop(shared);
+        if notice {
+            if let Some(notify) = &self.failure_notice {
+                notify();
+            }
+        }
+        result
     }
 }
 
 impl std::io::Write for WriterWrapper {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.writer.lock().write(buf)
+        self.access(|writer| writer.write(buf))
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.lock().flush()
+        self.access(|writer| writer.flush())
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        // A protocol frame must not be spliced by a synchronous public caller
+        // between two short kernel writes.
+        self.access(|writer| writer.write_all(bytes))
     }
 }
 
@@ -616,7 +680,7 @@ impl Domain for LocalDomain {
             self.name
         );
         let child_result = pair.slave.spawn_command(cmd);
-        let mut writer = WriterWrapper::new(pair.master.take_writer()?);
+        let mut writer = WriterWrapper::with_failure_notice(pair.master.take_writer()?, pane_id);
 
         let mut terminal = wezterm_term::Terminal::new(
             size,

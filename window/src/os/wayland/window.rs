@@ -488,6 +488,31 @@ impl WindowOps for WaylandWindow {
         future
     }
 
+    fn supports_mime_clipboard(&self) -> bool {
+        true
+    }
+
+    fn clipboard_offer(
+        &self,
+        clipboard: Clipboard,
+    ) -> Future<Arc<dyn crate::clipboard::ClipboardOffer>> {
+        let conn = crate::Connection::get().unwrap().wayland();
+        let offers = conn.wayland_state.borrow().copy_paste_offer.clone();
+        let result = offers.lock().unwrap().retain_offer(clipboard);
+        Future::result(result)
+    }
+
+    fn set_mime_clipboard(
+        &self,
+        clipboard: Clipboard,
+        data: crate::clipboard::ClipboardData,
+    ) -> Future<()> {
+        let conn = crate::Connection::get().unwrap().wayland();
+        let offers = conn.wayland_state.borrow().copy_paste_offer.clone();
+        let result = offers.lock().unwrap().set_mime_data(clipboard, data);
+        Future::result(result)
+    }
+
     fn set_clipboard(&self, clipboard: Clipboard, text: String) {
         promise::spawn::spawn_into_main_thread(async move {
             let conn = crate::Connection::get().unwrap().wayland();

@@ -247,6 +247,11 @@ pub trait Pane: Downcast + Send + Sync {
     }
     fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>>;
     fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write>;
+    /// Enqueues GUI input without waiting for native delivery; public writer() remains synchronous.
+    fn enqueue_input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.writer().write_all(bytes)?;
+        Ok(())
+    }
     fn resize(&self, size: TerminalSize) -> anyhow::Result<()>;
     /// Called as a hint that the pane is being resized as part of
     /// a zoom-to-fill-all-the-tab-space operation.
@@ -321,6 +326,28 @@ pub trait Pane: Downcast + Send + Sync {
     fn is_alt_screen_active(&self) -> bool;
 
     fn set_clipboard(&self, _clipboard: &Arc<dyn Clipboard>) {}
+    /// Attaches a native OSC5522 handler only on supported local GUI panes.
+    fn set_mime_clipboard(
+        &self,
+        _handler: Arc<dyn wezterm_term::clipboard::ClipboardHandler>,
+    ) -> bool {
+        false
+    }
+    /// Sets the clipboard response payload budget without limiting ordinary input.
+    fn set_clipboard_byte_limit(&self, _limit: usize) {}
+    /// Queues a protocol response without interleaving normal terminal input.
+    fn send_clipboard_response(&self, _response: wezterm_term::clipboard::ClipboardResponse) {}
+    /// Reserves a bounded response slot before GUI paste admission.
+    fn reserve_clipboard_response(&self) -> Option<wezterm_term::ClipboardQueuePermit> {
+        None
+    }
+    /// Queues a complete offer with its existing reservation.
+    fn send_reserved_clipboard_response(
+        &self,
+        _response: wezterm_term::clipboard::ClipboardResponse,
+        _permit: wezterm_term::ClipboardQueuePermit,
+    ) {
+    }
     fn set_download_handler(&self, _handler: &Arc<dyn DownloadHandler>) {}
     fn set_config(&self, _config: Arc<dyn TerminalConfiguration>) {}
     fn get_config(&self) -> Option<Arc<dyn TerminalConfiguration>> {

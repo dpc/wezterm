@@ -7093,6 +7093,7 @@ name = "wezterm-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "benchmarking",
  "bitflags 1.3.2",
  "bytemuck",
@@ -7133,6 +7134,7 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "promise",
+ "rand 0.8.7",
  "rangeset",
  "ratelim",
  "rayon",
@@ -7319,6 +7321,7 @@ name = "wezterm-term"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bitflags 1.3.2",
  "csscolorparser",
  "downcast-rs",
@@ -7335,6 +7338,7 @@ dependencies = [
  "num-traits",
  "ordered-float 4.6.0",
  "serde",
+ "serde_json",
  "terminfo",
  "termwiz",
  "unicode-normalization",

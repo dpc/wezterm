@@ -397,6 +397,7 @@ The table below is keyed by the OSC code.
 |11 |Set Default Text Background Color| | `\x1b]11;#0000ff\x1b\\`.<br/> Also supports RGBA in nightly builds: `printf "\e]11;rgba:efff/ecff/f4ff/d000\x07"` |
 |12 |Set Text Cursor Color| | `\x1b]12;#00ff00\x1b\\`.<br/> Also supports RGBA in nightly builds. |
 |52 |Manipulate clipboard | Requests to query the clipboard are ignored. Allows setting or clearing the clipboard | |
+|5522 |MIME clipboard access | Native Wayland/local Linux panes: arbitrary MIME reads, writes, aliases and gesture grants; query mode5522 for support. See [clipboard access](clipboard.md). | |
 |104|ResetColors | Reset color palette entries to their default values | |
 |133|FinalTerm semantic escapes| Informs the terminal about Input, Output and Prompt regions on the display | [See Shell Integration](shell-integration.md) |
 |777|Call rxvt extension| Only the notify extension is supported; it shows a "toast" notification | `printf "\e]777;notify;%s;%s\e\\" "title" "body"` |

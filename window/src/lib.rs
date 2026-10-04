@@ -9,6 +9,7 @@ use std::rc::Rc;
 use thiserror::Error;
 use url::Url;
 pub mod bitmaps;
+pub mod clipboard;
 pub use wezterm_color_types as color;
 mod configuration;
 pub mod connection;
@@ -315,6 +316,28 @@ pub trait WindowOps {
 
     /// Initiate textual transfer from the clipboard
     fn get_clipboard(&self, clipboard: Clipboard) -> Future<String>;
+
+    /// Reports native arbitrary-MIME support, not text-only clipboard support.
+    fn supports_mime_clipboard(&self) -> bool {
+        false
+    }
+
+    /// Retains the current selection identity without acquiring its contents.
+    fn clipboard_offer(
+        &self,
+        _clipboard: Clipboard,
+    ) -> Future<std::sync::Arc<dyn clipboard::ClipboardOffer>> {
+        Future::err(clipboard::ClipboardError::Unsupported.into())
+    }
+
+    /// Replaces a native selection with fully validated MIME bytes.
+    fn set_mime_clipboard(
+        &self,
+        _clipboard: Clipboard,
+        _data: clipboard::ClipboardData,
+    ) -> Future<()> {
+        Future::err(clipboard::ClipboardError::Unsupported.into())
+    }
 
     /// Set some text in the clipboard
     fn set_clipboard(&self, clipboard: Clipboard, text: String);

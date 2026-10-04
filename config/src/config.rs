@@ -1,4 +1,8 @@
 use crate::background::{BackgroundLayer, Gradient};
+
+fn default_osc5522_read_limit() -> usize {
+    64 * 1024 * 1024
+}
 use crate::bell::{AudibleBell, EasingFunction, VisualBell};
 use crate::color::{
     ColorSchemeFile, HsbTransform, Palette, SrgbaTuple, TabBarStyle, WindowFrameConfig,
@@ -86,6 +90,18 @@ pub struct Config {
 
     #[dynamic(default)]
     pub log_unknown_escape_sequences: bool,
+
+    /// Permit application-initiated OSC5522 clipboard content reads without a paste gesture.
+    #[dynamic(default)]
+    pub allow_osc5522_clipboard_read: bool,
+
+    /// Permit application-initiated OSC5522 multi-format clipboard replacement.
+    #[dynamic(default)]
+    pub allow_osc5522_clipboard_write: bool,
+
+    /// Aggregate decoded read resource policy, independent of protocol writes.
+    #[dynamic(default = "default_osc5522_read_limit")]
+    pub osc5522_clipboard_read_limit: usize,
 
     #[dynamic(default)]
     pub integrated_title_button_alignment: IntegratedTitleButtonAlignment,

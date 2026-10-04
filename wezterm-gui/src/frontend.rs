@@ -261,8 +261,8 @@ impl GuiFrontEnd {
                     {
                         Ok((_tab, pane, _window_id)) => {
                             log::trace!("Spawned {file_name} as pane_id {}", pane.pane_id());
-                            let mut writer = pane.writer();
-                            write!(writer, "{quoted_file_name} ; exit\n").ok();
+                            pane.enqueue_input(format!("{quoted_file_name} ; exit\n").as_bytes())
+                                .ok();
                         }
                         Err(err) => {
                             log::error!("Failed to spawn {file_name}: {err:#?}");

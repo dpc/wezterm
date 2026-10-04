@@ -1,0 +1,1185 @@
+{
+  "format": "tau-osc5522-transcripts-v2",
+  "review_date": "2026-10-04",
+  "sources": [
+    "https://rockorager.dev/misc/bracketed-paste-mime/",
+    "https://sw.kovidgoyal.net/kitty/clipboard/"
+  ],
+  "ancillary_revision": "2026-08-04",
+  "status": "Partial synthetic wire fixtures; user approved whole OSC5522 service; NOT full acceptance suite/conformance proof; examples not executed.",
+  "coordinator_local_policy": {
+    "auto_reads": "user_gesture_only",
+    "mime_priority": [
+      "image/png",
+      "supported_plaintext"
+    ],
+    "filesystem_authority": false,
+    "uri_dereference": false,
+    "grant_ttl_seconds": 30,
+    "grant_binding": [
+      "terminal_pane",
+      "attachment",
+      "clipboard_location"
+    ],
+    "grant_consumption": "admission_of_first_valid_authorized_supported_MIME_read_even_if_transfer_later_fails",
+    "ungranted_reads": "EPERM_deny_by_default",
+    "active_read_new_gesture": "reject_at_UI_action_admission_before_accepted_paste_event",
+    "replacement": "new_accepted_gesture_replaces_unused_grant",
+    "completion": "DONE_before_publication",
+    "clear_on": [
+      "observable_GUI_focus_change",
+      "pane_change",
+      "attachment_change",
+      "mode_off",
+      "reset",
+      "disconnect"
+    ],
+    "backend_scope": "native_Wayland_local_GUI_ordinary_SSH_tmux; no_remote_WezTerm_mux_support_advertisement",
+    "tau_artifact_max_bytes": 16777216,
+    "native_offer": "retain_original_SelectionOffer_full_MIME_set_lazy_reads_cancel_on_owner_generation_change_NOT_immutable_snapshot",
+    "terminal_service": "full_OSC5522_native_Wayland_inside_WezTerm_full_tmux_mediation_no_separate_service",
+    "terminal_ambient_permissions": "deny_reads_and_writes_unless_configured; MIME_listing_prompt_free_recommendation",
+    "tmux_ordinary_requests": "relay_to_terminal_permission_decision; isolate_foreign_pane_grants",
+    "write_service": "full_write_wdata_walias_arbitrary_MIME_primary_where_available_capacity_at_least_64MB",
+    "parser_isolated_ESC_deadline_ms": 25,
+    "parser_split_guarantee": "lossless_after_recognized_introducer; isolated_ESC_following_introducer_byte_must_arrive_before_25ms_deadline",
+    "terminal_aggregate_read_limit_default_bytes": 67108864,
+    "terminal_read_limit_configurable": true,
+    "oversize_read_policy": "EPERM_explicit_configured_resource_denial",
+    "permanent_native_failure_before_OK": "no_OK_no_invented_status_content_free_local_diagnostic_client_bounded_timeout; engineer_validates_against_spec"
+  },
+  "policy_label_note": "Consumer PNG preference/Tau artifact cap do not restrict terminal MIME offer/service. Existing cases are partial illustrative coverage; engineers own full writes/native-owner/mux/backpressure acceptance.",
+  "conventions": {
+    "wire": "JSON strings decode to exact ASCII bytes; no literal formatting spaces.",
+    "directions": "Application is the TUI; terminal may include multiplexer routing.",
+    "local": "Non-wire event; never write to terminal.",
+    "tokens": "Predictable fixture values only; never use them in production.",
+    "expected": "Semantic assertions/proposed consumer results, not observed executions.",
+    "hex": "Lowercase hex of decoded bytes. PNG bytes are opaque, not image-decoder validated."
+  },
+  "cases": [
+    {
+      "name": "capability_supported_reset",
+      "basis": "normative_wire",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522$p",
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b[?5522;2$y",
+          "expect": {
+            "mode": "supported_reset"
+          }
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?2004h",
+          "expect": {}
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522h",
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "mode5522": true,
+        "mode2004": true,
+        "paste_uses": "5522_only"
+      }
+    },
+    {
+      "name": "capability_unsupported_0",
+      "basis": "normative_wire_plus_proposed_policy",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522$p",
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b[?5522;0$y",
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "supported": false,
+        "proposed_action": "keep_2004_no_5522_enable"
+      }
+    },
+    {
+      "name": "capability_unsupported_4",
+      "basis": "normative_wire_plus_proposed_policy",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522$p",
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b[?5522;4$y",
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "supported": false,
+        "proposed_action": "keep_2004_no_5522_enable"
+      }
+    },
+    {
+      "name": "capability_supported_1",
+      "basis": "standard_DECRPM_plus_local_policy",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522$p",
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b[?5522;1$y",
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "supported": true,
+        "mode_already_set": true,
+        "fixed_set": false
+      }
+    },
+    {
+      "name": "lifecycle_pause_resume_cleanup",
+      "basis": "proposed_policy_using_normative_wire",
+      "premises": [
+        "Initially supported mutable mode, enabled and owned by application."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522l",
+          "expect": {
+            "transition": "pause_before_external_program"
+          }
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522h",
+          "expect": {
+            "transition": "resume_owned_terminal"
+          }
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b[?5522l",
+          "expect": {
+            "transition": "cleanup"
+          }
+        }
+      ],
+      "expected": {
+        "proposed_action": "invalidate_local_pending_reads_and_grants_on_pause_cleanup"
+      }
+    },
+    {
+      "name": "image_and_text_offer_choose_png",
+      "basis": "normative_wire_plus_proposed_mime_priority",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:pw=Zml4dHVyZS10b2tlbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==:pw=Zml4dHVyZS10b2tlbg==;aW1hZ2UvcG5nIHRleHQvcGxhaW4K\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "pw": "666978747572652d746f6b656e",
+            "payload": "696d6167652f706e6720746578742f706c61696e0a"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:pw=Zml4dHVyZS10b2tlbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=img-01:pw=Zml4dHVyZS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;aW1hZ2UvcG5n\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "696d6167652f706e67"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=img-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=img-01:mime=aW1hZ2UvcG5n;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "696d6167652f706e67",
+            "payload": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200ef9a375b0000000049454e44ae426082"
+          },
+          "expect": {
+            "completion": false,
+            "publish_artifact": false
+          }
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=img-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {
+            "completion": true,
+            "completed_mime": "image/png",
+            "decoded_hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200ef9a375b0000000049454e44ae426082"
+          }
+        }
+      ],
+      "expected": {
+        "selected_mime": "image/png",
+        "byte_count": 68,
+        "sha256": "dd2f7b620f99beca7f871778d15112869283b4f13399e4ebdf389bb616969bd3",
+        "decoded_hex": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200ef9a375b0000000049454e44ae426082"
+      }
+    },
+    {
+      "name": "text_only_bel_offer",
+      "basis": "normative_wire",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:pw=Zml4dHVyZS10b2tlbg==\u0007",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==;IAl0ZXh0L3BsYWluDQo=\u0007",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "payload": "2009746578742f706c61696e0d0a"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE\u0007",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=txt-01:pw=Zml4dHVyZS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=txt-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=txt-01:mime=dGV4dC9wbGFpbg==;aGVsbG8Kz4A=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "68656c6c6f0acf80"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=txt-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "offer_mimes": [
+          "text/plain"
+        ],
+        "decoded_hex": "68656c6c6f0acf80",
+        "text_utf8": "hello\n\u03c0"
+      }
+    },
+    {
+      "name": "primary_text",
+      "basis": "normative_wire",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:loc=primary:pw=cHJpbWFyeS10b2tlbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "7072696d6172792d746f6b656e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==;dGV4dC9odG1sIHRleHQvcGxhaW4K\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "payload": "746578742f68746d6c20746578742f706c61696e0a"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=pri-01:loc=primary:pw=cHJpbWFyeS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "7072696d6172792d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=pri-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=pri-01:mime=dGV4dC9wbGFpbg==;cHJpbWFyeQ==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "7072696d617279"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=pri-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "location": "primary",
+        "decoded_hex": "7072696d617279"
+      }
+    },
+    {
+      "name": "optional_no_token_offer",
+      "basis": "normative_wire",
+      "premises": [
+        "Standard permission policy denies this read; absence of token alone does not mandate EPERM."
+      ],
+      "steps": [
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=nt-01;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=nt-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "read_error": "EPERM",
+        "automatic_authorization": false,
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "read_error_EPERM",
+      "basis": "normative_wire",
+      "premises": [
+        "Permission denied."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=err-EPERM;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=err-EPERM\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "error": "EPERM",
+        "no_OK_DATA_DONE": true,
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "read_error_EBUSY",
+      "basis": "normative_wire",
+      "premises": [
+        "Temporary contention."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=err-EBUSY;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EBUSY:id=err-EBUSY\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "error": "EBUSY",
+        "no_OK_DATA_DONE": true,
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "read_error_ENOSYS",
+      "basis": "normative_wire",
+      "premises": [
+        "Primary selection unavailable on this system."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=err-ENOSYS:loc=primary;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=ENOSYS:id=err-ENOSYS\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "error": "ENOSYS",
+        "no_OK_DATA_DONE": true,
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "multiple_mimes_unavailable_ignored",
+      "basis": "normative_wire",
+      "premises": [
+        "User/system grants read; PNG and plaintext available; application/x-unavailable absent. Order illustrated, not mandated."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=multi-01;YXBwbGljYXRpb24veC11bmF2YWlsYWJsZSBpbWFnZS9wbmcgdGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "6170706c69636174696f6e2f782d756e617661696c61626c6520696d6167652f706e6720746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=multi-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=multi-01:mime=aW1hZ2UvcG5n;iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1sAAAAASUVORK5CYII=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "696d6167652f706e67",
+            "payload": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200ef9a375b0000000049454e44ae426082"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=multi-01:mime=dGV4dC9wbGFpbg==;YWx0\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "616c74"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=multi-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "returned_mimes": [
+          "image/png",
+          "text/plain"
+        ],
+        "results_hex": {
+          "image/png": "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200ef9a375b0000000049454e44ae426082",
+          "text/plain": "616c74"
+        }
+      }
+    },
+    {
+      "name": "independently_padded_read_chunks",
+      "basis": "normative_wire",
+      "premises": [
+        "Permission granted. Do NOT concatenate padded base64 strings before decoding."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=chunk-01;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=chunk-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=chunk-01:mime=dGV4dC9wbGFpbg==;QQ==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "41"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=chunk-01:mime=dGV4dC9wbGFpbg==;QkM=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "4243"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=chunk-01:mime=dGV4dC9wbGFpbg==;REVGRw==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "44454647"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=chunk-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "decoded_hex": "41424344454647",
+        "decode_rule": "decode_each_then_concatenate",
+        "complete_only_on_DONE": true
+      }
+    },
+    {
+      "name": "4096_byte_boundary",
+      "basis": "normative_wire",
+      "premises": [
+        "Permission granted."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=big-01;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=big-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=big-01:mime=dGV4dC9wbGFpbg==;eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eA==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=big-01:mime=dGV4dC9wbGFpbg==;eQ==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "79"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=big-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "chunk_sizes": [
+          4096,
+          1
+        ],
+        "decoded_hex": "7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787879"
+      }
+    },
+    {
+      "name": "transport_fragmented_OSC_and_ST",
+      "basis": "normative_wire_plus_proposed_parser_expectation",
+      "premises": [
+        "Permission granted; transport fragments are not clipboard DATA chunks.",
+        "Initial isolated ESC is followed by introducer byte before approved25ms deadline; lossless split guarantee applies after introducer recognition, not indefinitely delayed ESC."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=split-01;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=split-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=split-01:mime=dGV4dC9wbGFpbg==;YWJj\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "616263"
+          },
+          "expect": {},
+          "transport_fragments": [
+            "\u001b",
+            "]",
+            "5522;type=read:",
+            "status=DATA:id=split-01:mime=dGV4dC9wbGFpbg==;YWJj\u001b",
+            "\\"
+          ]
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=split-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "decoded_hex": "616263",
+        "no_frame_event_until_terminator": true,
+        "initial_ESC_deadline_ms": 25
+      }
+    },
+    {
+      "name": "stale_id_during_current_read",
+      "basis": "proposed_correlation_policy_using_normative_wire",
+      "premises": [
+        "old-01 belongs to an expired earlier read; never reinterpret id-bearing packets as an unsolicited offer."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=live-02;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=live-02\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=old-01:mime=dGV4dC9wbGFpbg==;d3Jvbmc=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "77726f6e67"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=old-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=live-02:mime=dGV4dC9wbGFpbg==;cmlnaHQ=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "7269676874"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=live-02\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "ignore_ids": [
+          "old-01"
+        ],
+        "decoded_hex": "7269676874"
+      }
+    },
+    {
+      "name": "partial_read_then_detach",
+      "basis": "proposed_lifecycle_policy_using_normative_wire",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=cut-01;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=cut-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=cut-01:mime=dGV4dC9wbGFpbg==;cGFydGlhbA==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "7061727469616c"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "local",
+          "event": "attachment_detached"
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=cut-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "publish_artifact": false,
+        "discard_partial": true,
+        "ignore_late_DONE": true
+      }
+    },
+    {
+      "name": "grant_wrong_location",
+      "basis": "normative_wire",
+      "premises": [
+        "Token was issued for primary.",
+        "Standard permission policy denies unauthenticated reads.",
+        "Request targets default clipboard, not primary."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=grant-01:pw=cHJpbWFyeS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "7072696d6172792d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=grant-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "automatic_authorization": false,
+        "error": "EPERM",
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "grant_without_name",
+      "basis": "normative_wire",
+      "premises": [
+        "Token was issued for primary.",
+        "Standard permission policy denies unauthenticated reads.",
+        "pw without name has no password authority."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=grant-02:loc=primary:pw=cHJpbWFyeS10b2tlbg==;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "7072696d6172792d746f6b656e",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=grant-02\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "automatic_authorization": false,
+        "error": "EPERM",
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "grant_replayed",
+      "basis": "normative_wire",
+      "premises": [
+        "Token was issued for primary.",
+        "Standard permission policy denies unauthenticated reads.",
+        "Token was already used by a completed earlier read."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=grant-03:loc=primary:pw=cHJpbWFyeS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "7072696d6172792d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=grant-03\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "automatic_authorization": false,
+        "error": "EPERM",
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "grant_expired",
+      "basis": "normative_wire",
+      "premises": [
+        "Token was issued for primary.",
+        "Standard permission policy denies unauthenticated reads.",
+        "Terminal short timeout has elapsed; exact timeout is not specified."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=grant-04:loc=primary:pw=cHJpbWFyeS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "7072696d6172792d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=grant-04\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "automatic_authorization": false,
+        "error": "EPERM",
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "grant_mismatch_in_offer",
+      "basis": "normative_violation_plus_proposed_recovery_policy",
+      "premises": [],
+      "steps": [
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:pw=b25l\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "6f6e65"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==:pw=dHdv;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "pw": "74776f",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "normative_violation": "Repeated pw differs from OK.",
+        "proposed_action": "discard_offer_no_read"
+      }
+    },
+    {
+      "name": "busy_new_gesture_rejected_before_paste_event",
+      "basis": "coordinator_local_policy",
+      "premises": [
+        "Do not call the rejected GUI action an accepted paste event; accepted events require an offer."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=active-01:pw=Zml4dHVyZS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:id=active-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "local",
+          "event": "GUI_paste_action_rejected_busy_before_acceptance"
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:id=active-01:mime=dGV4dC9wbGFpbg==;b3JpZ2luYWw=\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "746578742f706c61696e",
+            "payload": "6f726967696e616c"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE:id=active-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "no_new_offer": true,
+        "no_unsolicited_EBUSY": true,
+        "decoded_hex": "6f726967696e616c"
+      }
+    },
+    {
+      "name": "wrong_pane_grant_denied",
+      "basis": "coordinator_local_policy",
+      "premises": [
+        "Token belongs to pane/attachment A; request comes from pane/attachment B; deny-by-default."
+      ],
+      "steps": [
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=other-pane-01:pw=Zml4dHVyZS10b2tlbg==:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "666978747572652d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=other-pane-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "error": "EPERM",
+        "owner_grant_consumed": false,
+        "publish_artifact": false
+      }
+    },
+    {
+      "name": "unused_grant_replaced",
+      "basis": "coordinator_local_policy",
+      "premises": [
+        "No read active; second accepted user gesture replaces unused grant."
+      ],
+      "steps": [
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:pw=b2xkLXRva2Vu\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "6f6c642d746f6b656e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=OK:pw=bmV3LXRva2Vu\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "6e65772d746f6b656e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DATA:mime=Lg==;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "mime": "2e",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=DONE\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        },
+        {
+          "direction": "application_to_terminal",
+          "wire": "\u001b]5522;type=read:id=replaced-01:pw=b2xkLXRva2Vu:name=UGFzdGUgZXZlbnQ=;dGV4dC9wbGFpbg==\u001b\\",
+          "base64_decoded_hex": {
+            "pw": "6f6c642d746f6b656e",
+            "name": "5061737465206576656e74",
+            "payload": "746578742f706c61696e"
+          },
+          "expect": {}
+        },
+        {
+          "direction": "terminal_to_application",
+          "wire": "\u001b]5522;type=read:status=EPERM:id=replaced-01\u001b\\",
+          "base64_decoded_hex": {},
+          "expect": {}
+        }
+      ],
+      "expected": {
+        "error": "EPERM",
+        "new_grant_consumed": false
+      }
+    }
+  ],
+  "supersedes": {
+    "contract": "/tmp/public/osc5522-contract-Zffbn8sT.md",
+    "fixtures": "/tmp/public/osc5522-transcripts-Wj5iRweZ.json",
+    "withdrawn_policy": "16MiB terminal immutable snapshot"
+  },
+  "contract": "/tmp/public/osc5522-contract-v2-s4Ju6uel.md"
+}

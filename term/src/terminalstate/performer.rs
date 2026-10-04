@@ -677,6 +677,9 @@ impl<'a> Performer<'a> {
             // reset graphic rendition, erase all positions, move active position to first
             // character position of first line.
             Esc::Code(EscCode::FullReset) => {
+                if let Some(clipboard) = &self.mime_clipboard {
+                    clipboard.set_enabled(false);
+                }
                 let seqno = self.seqno;
                 self.pen = Default::default();
                 self.cursor = Default::default();
@@ -772,6 +775,11 @@ impl<'a> Performer<'a> {
             }
             OperatingSystemCommand::SetHyperlink(link) => {
                 self.set_hyperlink(link);
+            }
+            OperatingSystemCommand::Clipboard5522(packet) => {
+                if let Some(clipboard) = &self.mime_clipboard {
+                    clipboard.handle(packet.0);
+                }
             }
             OperatingSystemCommand::Unspecified(unspec) => {
                 if self.config.log_unknown_escape_sequences() {

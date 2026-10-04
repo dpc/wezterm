@@ -15,6 +15,7 @@ use_serde = ["termwiz/use_serde", "wezterm-cell/use_serde", "wezterm-escape-pars
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 bitflags.workspace = true
 csscolorparser.workspace = true
 downcast-rs.workspace = true
@@ -39,6 +40,7 @@ wezterm-escape-parser = {workspace = true, features=["std", "use_image"]}
 wezterm-surface = {workspace = true, features=["std", "appdata", "use_image"]}
 
 [dev-dependencies]
+serde_json.workspace = true
 env_logger.workspace = true
 k9.workspace = true
 

@@ -25,6 +25,8 @@ use wezterm_escape_parser::csi::{
 use wezterm_escape_parser::{OneBased, OperatingSystemCommand, CSI};
 use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo};
 
+#[cfg(test)]
+mod clipboard_tests;
 mod image;
 mod iterm;
 mod keyboard;
@@ -245,6 +247,8 @@ impl ScreenOrAlt {
 
 /// Manages the state for the terminal
 pub struct TerminalState {
+    /// GUI-only OSC5522 attachment; headless and proxy terminals remain unsupported.
+    mime_clipboard: Option<Arc<dyn crate::clipboard::ClipboardHandler>>,
     config: Arc<dyn TerminalConfiguration>,
 
     screen: ScreenOrAlt,
@@ -445,11 +449,34 @@ fn default_color_map() -> HashMap<u16, RgbColor> {
 /// input from the interactive user, or pastes.
 struct ThreadedWriter {
     sender: Sender<WriterMessage>,
+    /// Bound queued clipboard responses independently of ordinary input.
+    clipboard_pending: Arc<std::sync::atomic::AtomicUsize>,
+    /// Payload bytes include the response currently being written.
+    clipboard_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    /// Configured admission budget for clipboard payloads.
+    clipboard_limit: usize,
+}
+
+/// Releases queue accounting even when the receiving worker fails or disconnects.
+pub struct ClipboardQueuePermit {
+    pending: Arc<std::sync::atomic::AtomicUsize>,
+    bytes: Arc<std::sync::atomic::AtomicUsize>,
+    size: usize,
+}
+
+impl Drop for ClipboardQueuePermit {
+    fn drop(&mut self) {
+        self.pending
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.bytes
+            .fetch_sub(self.size, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 enum WriterMessage {
     Data(Vec<u8>),
     Flush,
+    Clipboard(crate::clipboard::ClipboardResponse, ClipboardQueuePermit),
 }
 
 impl ThreadedWriter {
@@ -460,7 +487,7 @@ impl ThreadedWriter {
             while let Ok(msg) = receiver.recv() {
                 match msg {
                     WriterMessage::Data(buf) => {
-                        if writer.write(&buf).is_err() {
+                        if writer.write_all(&buf).is_err() {
                             break;
                         }
                     }
@@ -469,11 +496,83 @@ impl ThreadedWriter {
                             break;
                         }
                     }
+                    WriterMessage::Clipboard(response, _permit) => {
+                        let result = response.write_to(&mut writer);
+                        if result.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         });
 
-        Self { sender }
+        Self {
+            sender,
+            clipboard_pending: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            clipboard_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            clipboard_limit: crate::clipboard::WRITE_LIMIT,
+        }
+    }
+
+    fn clipboard(&mut self, response: crate::clipboard::ClipboardResponse) {
+        if let Some(permit) = self.reserve_clipboard_response() {
+            self.clipboard_reserved(response, permit);
+        }
+    }
+
+    fn reserve_clipboard_response(&self) -> Option<ClipboardQueuePermit> {
+        use std::sync::atomic::Ordering;
+        if self
+            .clipboard_pending
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 64).then_some(n + 1)
+            })
+            .is_err()
+        {
+            return None;
+        }
+        Some(ClipboardQueuePermit {
+            pending: self.clipboard_pending.clone(),
+            bytes: self.clipboard_bytes.clone(),
+            size: 0,
+        })
+    }
+
+    fn clipboard_reserved(
+        &mut self,
+        mut response: crate::clipboard::ClipboardResponse,
+        mut permit: ClipboardQueuePermit,
+    ) {
+        use std::sync::atomic::Ordering;
+        if !Arc::ptr_eq(&permit.pending, &self.clipboard_pending) {
+            return;
+        }
+        // Metadata offers are separately bounded by count * METADATA_LIMIT.
+        let size: usize = response
+            .data
+            .iter()
+            .filter(|(mime, _)| mime.as_str() != ".")
+            .map(|(_, v)| v.len())
+            .sum();
+        let charged = if self
+            .clipboard_bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                n.checked_add(size)
+                    .filter(|total| *total <= self.clipboard_limit)
+            })
+            .is_ok()
+        {
+            size
+        } else {
+            // A revoked but blocked older frame can still occupy the bounded
+            // transport. Refuse a competing response before opening OK.
+            response.data.clear();
+            response.error = Some("EBUSY");
+            0
+        };
+        permit.size = charged;
+        // SendError drops both the response and its permit.
+        let _ = self.sender.send(WriterMessage::Clipboard(response, permit));
     }
 }
 
@@ -513,6 +612,7 @@ impl TerminalState {
         let unicode_version = config.unicode_version();
 
         TerminalState {
+            mime_clipboard: None,
             config,
             screen,
             pen: CellAttributes::default(),
@@ -765,6 +865,11 @@ impl TerminalState {
 
     /// Advise the terminal about a change in its focus state
     pub fn focus_changed(&mut self, focused: bool) {
+        if !focused {
+            if let Some(clipboard) = &self.mime_clipboard {
+                clipboard.invalidate();
+            }
+        }
         if focused == self.focused {
             return;
         }
@@ -843,6 +948,53 @@ impl TerminalState {
         self.writer.write_all(buf.as_bytes())?;
         self.writer.flush()?;
         Ok(())
+    }
+
+    /// Installs a native GUI clipboard attachment, never a remote mux proxy.
+    pub fn set_mime_clipboard(&mut self, handler: Arc<dyn crate::clipboard::ClipboardHandler>) {
+        if self
+            .mime_clipboard
+            .as_ref()
+            .is_some_and(|old| Arc::ptr_eq(old, &handler))
+        {
+            return;
+        }
+        if let Some(previous) = self.mime_clipboard.take() {
+            previous.detach();
+        }
+        self.mime_clipboard = Some(handler);
+    }
+
+    /// Queues a bounded clipboard response on the same writer as other input.
+    pub fn send_clipboard_response(&mut self, response: crate::clipboard::ClipboardResponse) {
+        self.writer.flush().ok();
+        self.writer.get_mut().clipboard(response);
+    }
+
+    /// Reserves an offer slot before accepting a paste gesture or replacing its grant.
+    pub fn reserve_clipboard_response(&self) -> Option<ClipboardQueuePermit> {
+        self.writer.get_ref().reserve_clipboard_response()
+    }
+
+    /// Delivers a response using its pre-admission reservation.
+    pub fn send_reserved_clipboard_response(
+        &mut self,
+        response: crate::clipboard::ClipboardResponse,
+        permit: ClipboardQueuePermit,
+    ) {
+        self.writer.flush().ok();
+        self.writer.get_mut().clipboard_reserved(response, permit);
+    }
+
+    /// Updates the clipboard-only byte budget; ordinary input retains its existing queue.
+    pub fn set_clipboard_byte_limit(&mut self, limit: usize) {
+        self.writer.get_mut().clipboard_limit = limit.max(crate::clipboard::METADATA_LIMIT);
+    }
+
+    /// Enqueues direct GUI input after any buffered terminal response bytes.
+    pub fn enqueue_input(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.writer.flush()?;
+        self.writer.get_mut().write_all(bytes)
     }
 
     /// Informs the terminal that the viewport of the window has resized to the
@@ -1257,6 +1409,10 @@ impl TerminalState {
                 }
             }
             Device::SoftReset => {
+                // Keep the application-selected mode but revoke all authority/work.
+                if let Some(clipboard) = &self.mime_clipboard {
+                    clipboard.invalidate();
+                }
                 // TODO: see https://vt100.net/docs/vt510-rm/DECSTR.html
                 self.pen = CellAttributes::default();
                 self.insert = false;
@@ -1401,7 +1557,7 @@ impl TerminalState {
         let (is_dec, number) = match &mode {
             Mode::QueryDecPrivateMode(DecPrivateMode::Code(code)) => (true, code.to_u16().unwrap()),
             Mode::QueryDecPrivateMode(DecPrivateMode::Unspecified(code)) => {
-                recognized = false;
+                recognized &= *code == 5522;
                 (true, *code)
             }
             Mode::QueryMode(TerminalMode::Code(code)) => (false, code.to_u16().unwrap()),
@@ -1662,6 +1818,24 @@ impl TerminalState {
 
             Mode::SetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::BracketedPaste)) => {
                 self.bracketed_paste = true;
+            }
+            Mode::SetDecPrivateMode(DecPrivateMode::Unspecified(5522)) => {
+                if let Some(clipboard) = &self.mime_clipboard {
+                    if clipboard.supported() {
+                        clipboard.set_enabled(true);
+                    }
+                }
+            }
+            Mode::ResetDecPrivateMode(DecPrivateMode::Unspecified(5522)) => {
+                if let Some(clipboard) = &self.mime_clipboard {
+                    clipboard.set_enabled(false);
+                }
+            }
+            Mode::QueryDecPrivateMode(DecPrivateMode::Unspecified(5522)) => {
+                let supported = self.mime_clipboard.as_ref().is_some_and(|c| c.supported());
+                let enabled =
+                    supported && self.mime_clipboard.as_ref().is_some_and(|c| c.enabled());
+                self.decqrm_response(mode, supported, enabled);
             }
             Mode::ResetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::BracketedPaste)) => {
                 self.bracketed_paste = false;
