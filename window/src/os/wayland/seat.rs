@@ -67,6 +67,12 @@ impl SeatHandler for WaylandState {
                 .primary_selection_manager
                 .as_ref()
                 .map(|m| m.get_selection_device(qh, &seat));
+            if self.primary_selection_device.is_some() {
+                self.copy_paste_offer
+                    .lock()
+                    .unwrap()
+                    .confirm_primary_selection(None);
+            }
         }
     }
 

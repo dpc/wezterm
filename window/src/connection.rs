@@ -11,6 +11,15 @@ thread_local! {
     static CONN: RefCell<Option<Rc<Connection>>> = RefCell::new(None);
 }
 
+/// Installs an isolated transport for callback-path tests on the current thread.
+#[cfg(all(test, feature = "wayland", unix, not(target_os = "macos")))]
+pub(crate) fn set_test_connection(conn: Rc<Connection>) {
+    CONN.with(|slot| {
+        assert!(slot.borrow().is_none());
+        *slot.borrow_mut() = Some(conn);
+    });
+}
+
 fn nop_event_handler(_event: ApplicationEvent) {}
 
 static EVENT_HANDLER: Mutex<fn(ApplicationEvent)> = Mutex::new(nop_event_handler);

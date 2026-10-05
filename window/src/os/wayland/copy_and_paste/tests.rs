@@ -32,3 +32,29 @@ fn local_publish_cannot_relabel_cached_owner_before_confirmation() {
     assert!(!offers.pending_clipboard);
     assert!(offers.pending_primary);
 }
+
+#[test]
+fn primary_device_availability_and_generation_are_mirrored() {
+    let mut offers = CopyPasteOffer::default();
+    let error = offers
+        .retain_offer(Clipboard::PrimarySelection)
+        .err()
+        .unwrap();
+    assert!(matches!(
+        error.downcast_ref::<ClipboardError>(),
+        Some(ClipboardError::Unsupported)
+    ));
+    offers.confirm_primary_selection(None);
+    let retained = offers.retain_offer(Clipboard::PrimarySelection).unwrap();
+    assert!(retained.mime_types().is_empty());
+    assert!(retained.valid());
+    offers.publication_started(Clipboard::PrimarySelection);
+    assert!(!retained.valid());
+    assert!(offers.retain_offer(Clipboard::PrimarySelection).is_err());
+    offers.confirm_primary_selection(None);
+    assert!(offers
+        .retain_offer(Clipboard::PrimarySelection)
+        .unwrap()
+        .valid());
+    assert!(!retained.valid());
+}

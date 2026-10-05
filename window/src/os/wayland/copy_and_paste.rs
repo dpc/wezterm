@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use toolkit::data_device_manager::data_offer::SelectionOffer;
 use toolkit::data_device_manager::{ReadPipe, WritePipe};
 use toolkit::primary_selection::device::PrimarySelectionDeviceHandler;
+use toolkit::primary_selection::offer::PrimarySelectionOffer;
 use toolkit::primary_selection::selection::PrimarySelectionSourceHandler;
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1;
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1;
@@ -21,6 +22,8 @@ mod tests;
 #[derive(Default)]
 pub struct CopyPasteOffer {
     data_offer: Option<SelectionOffer>,
+    /// None means no device; Some(None) is a supported, empty selection.
+    primary_offer: Option<Option<PrimarySelectionOffer>>,
     /// Revoke retained clipboard identities whenever the compositor replaces/clears one.
     pub(super) generation: Arc<AtomicU64>,
     /// Independent primary selection identity.
@@ -107,8 +110,19 @@ impl CopyPasteOffer {
         data: crate::clipboard::ClipboardData,
     ) -> anyhow::Result<()> {
         let conn = crate::Connection::get().unwrap().wayland();
-        let qh = conn.event_queue.borrow().handle();
-        let mut wayland_state = conn.wayland_state.borrow_mut();
+        // Publication must stay synchronous with the caller's revocation lock.
+        // A reentrant caller cannot publish while protocol dispatch owns these
+        // cells; report acquisition failure rather than panic or enqueue a write
+        // that could execute after revocation.
+        let qh = conn
+            .event_queue
+            .try_borrow()
+            .map_err(|_| crate::clipboard::ClipboardError::Temporary)?
+            .handle();
+        let mut wayland_state = conn
+            .wayland_state
+            .try_borrow_mut()
+            .map_err(|_| crate::clipboard::ClipboardError::Temporary)?;
         let last_serial = *wayland_state.last_serial.borrow();
 
         let primary_selection = if let Clipboard::PrimarySelection = clipboard {
@@ -157,6 +171,13 @@ impl CopyPasteOffer {
         self.data_offer = offer;
     }
 
+    /// Tracks device availability and its exact selection outside dispatch state.
+    pub(super) fn confirm_primary_selection(&mut self, offer: Option<PrimarySelectionOffer>) {
+        self.primary_epoch = self.primary_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.pending_primary = false;
+        self.primary_offer = Some(offer);
+    }
+
     fn publication_started(&mut self, clipboard: Clipboard) {
         match clipboard {
             Clipboard::Clipboard => {
@@ -166,6 +187,9 @@ impl CopyPasteOffer {
             }
             Clipboard::PrimarySelection => {
                 self.primary_generation.fetch_add(1, Ordering::AcqRel);
+                if let Some(offer) = &mut self.primary_offer {
+                    *offer = None;
+                }
                 self.pending_primary = true;
             }
         }
@@ -201,14 +225,12 @@ impl CopyPasteOffer {
                 self.clipboard_epoch,
             ),
             Clipboard::PrimarySelection => {
-                let conn = crate::Connection::get().unwrap().wayland();
-                let state = conn.wayland_state.borrow();
-                let device = state
-                    .primary_selection_device
+                let offer = self
+                    .primary_offer
                     .as_ref()
                     .ok_or(crate::clipboard::ClipboardError::Unsupported)?;
                 (
-                    device.data().selection_offer().map(NativeOffer::Primary),
+                    offer.clone().map(NativeOffer::Primary),
                     self.primary_generation.clone(),
                     self.primary_epoch,
                 )
@@ -229,9 +251,12 @@ impl PrimarySelectionDeviceHandler for WaylandState {
         _qh: &wayland_client::QueueHandle<Self>,
         _primary_selection_device: &ZwpPrimarySelectionDeviceV1,
     ) {
-        let mut offers = self.copy_paste_offer.lock().unwrap();
-        offers.primary_epoch = offers.primary_generation.fetch_add(1, Ordering::AcqRel) + 1;
-        offers.pending_primary = false;
+        if let Some(device) = &self.primary_selection_device {
+            self.copy_paste_offer
+                .lock()
+                .unwrap()
+                .confirm_primary_selection(device.data().selection_offer());
+        }
     }
 }
 

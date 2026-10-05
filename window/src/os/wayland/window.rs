@@ -59,6 +59,8 @@ use crate::{
     RequestedWindowGeometry, ResizeIncrement, ResolvedGeometry, Window, WindowEvent,
     WindowEventSender, WindowKeyEvent, WindowOps, WindowState,
 };
+#[cfg(test)]
+mod clipboard_tests;
 
 /// Wayland-specific coordinate conversion methods for Dimensions
 trait WaylandDimensions {
@@ -497,8 +499,14 @@ impl WindowOps for WaylandWindow {
         clipboard: Clipboard,
     ) -> Future<Arc<dyn crate::clipboard::ClipboardOffer>> {
         let conn = crate::Connection::get().unwrap().wayland();
-        let offers = conn.wayland_state.borrow().copy_paste_offer.clone();
-        let result = offers.lock().unwrap().retain_offer(clipboard);
+        // Keyboard/pointer callbacks run while dispatch holds wayland_state
+        // mutably. Retain this exact offer now, without reborrowing that state
+        // or deferring until a subsequent selection event has replaced it.
+        let result = conn
+            .copy_paste_offer
+            .lock()
+            .unwrap()
+            .retain_offer(clipboard);
         Future::result(result)
     }
 
@@ -508,8 +516,11 @@ impl WindowOps for WaylandWindow {
         data: crate::clipboard::ClipboardData,
     ) -> Future<()> {
         let conn = crate::Connection::get().unwrap().wayland();
-        let offers = conn.wayland_state.borrow().copy_paste_offer.clone();
-        let result = offers.lock().unwrap().set_mime_data(clipboard, data);
+        let result = conn
+            .copy_paste_offer
+            .lock()
+            .unwrap()
+            .set_mime_data(clipboard, data);
         Future::result(result)
     }
 

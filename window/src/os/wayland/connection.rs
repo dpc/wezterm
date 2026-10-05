@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
 use mio::unix::SourceFd;
@@ -25,11 +26,18 @@ pub struct WaylandConnection {
     pub(super) connection: WConnection,
     pub(super) event_queue: RefCell<EventQueue<WaylandState>>,
     pub(super) wayland_state: RefCell<WaylandState>,
+    /// Offer identities must be accessible synchronously from dispatch callbacks.
+    pub(super) copy_paste_offer: Arc<Mutex<super::copy_and_paste::CopyPasteOffer>>,
 }
 
 impl WaylandConnection {
     pub(crate) fn create_new() -> anyhow::Result<Self> {
         let conn = WConnection::connect_to_env()?;
+        Self::from_connection(conn)
+    }
+
+    /// Initializes protocol state for an already connected Wayland transport.
+    pub(super) fn from_connection(conn: WConnection) -> anyhow::Result<Self> {
         let (globals, event_queue) = registry_queue_init::<WaylandState>(&conn)?;
         let qh = event_queue.handle();
 
@@ -40,6 +48,7 @@ impl WaylandConnection {
             next_window_id: AtomicUsize::new(1),
             gl_connection: RefCell::new(None),
             event_queue: RefCell::new(event_queue),
+            copy_paste_offer: wayland_state.copy_paste_offer.clone(),
             wayland_state: RefCell::new(wayland_state),
         };
 
