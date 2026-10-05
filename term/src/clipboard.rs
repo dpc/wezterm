@@ -652,6 +652,11 @@ impl ClipboardSession {
         self.grant.is_some()
     }
 
+    /// Returns the current grant's exact expiry for deadline-driven retention cleanup.
+    pub fn grant_deadline(&self) -> Option<Instant> {
+        self.grant.as_ref().map(|g| g.expires)
+    }
+
     fn malformed(&mut self, fields: &[Vec<u8>]) -> Option<ClipboardAction> {
         let meta = fields.first()?;
         let kind = meta

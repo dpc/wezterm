@@ -23,6 +23,18 @@ struct Session {
     epoch: u64,
 }
 
+impl Session {
+    fn retained_read_offer(&mut self) -> Option<Arc<dyn ClipboardOffer>> {
+        if self.protocol.has_grant() {
+            // An authorized read of only unavailable types is empty success
+            // and does not consume the grant or its native identity.
+            self.offer.clone()
+        } else {
+            self.offer.take()
+        }
+    }
+}
+
 /// A queued GUI request cannot retain unbounded parser input under UI backpressure.
 struct RequestTicket(Arc<AtomicUsize>);
 impl Drop for RequestTicket {
@@ -49,6 +61,8 @@ pub(super) struct MimeClipboard {
     session: Mutex<Session>,
     /// Avoid overlapping gesture admission before the native offer resolves.
     acquiring: AtomicBool,
+    /// At most one weak expiry task per attachment, never one per gesture.
+    expiry_task: AtomicBool,
     /// In-flight parser-to-GUI requests, including currently executing work.
     queued: Arc<AtomicUsize>,
 }
@@ -62,6 +76,7 @@ impl ClipboardHandler for MimeClipboard {
         self.attached.store(false, Ordering::Release);
         self.enabled.store(false, Ordering::Release);
         self.generation.fetch_add(1, Ordering::AcqRel);
+        self.session.lock().unwrap().offer = None;
     }
     fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Acquire)
@@ -72,11 +87,13 @@ impl ClipboardHandler for MimeClipboard {
             .store(enabled && self.supported(), Ordering::Release);
         if !enabled {
             self.generation.fetch_add(1, Ordering::AcqRel);
+            self.session.lock().unwrap().offer = None;
         }
     }
     fn invalidate(&self) {
         let _commit = self.commit.lock().unwrap();
         self.generation.fetch_add(1, Ordering::AcqRel);
+        self.session.lock().unwrap().offer = None;
     }
     fn handle(&self, fields: Vec<Vec<u8>>) {
         if !self.supported() {
@@ -129,6 +146,7 @@ impl MimeClipboard {
             generation,
             commit: Mutex::new(()),
             acquiring: AtomicBool::new(false),
+            expiry_task: AtomicBool::new(false),
             queued: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -229,7 +247,9 @@ impl MimeClipboard {
                 busy,
             } => {
                 let offer_future = if retained {
-                    match self.session.lock().unwrap().offer.clone() {
+                    // Admission consumes the one-use grant. Move its snapshot
+                    // into this read rather than retaining it in the session.
+                    match self.session.lock().unwrap().retained_read_offer() {
                         Some(offer) if offer.valid() && self.active(tw, epoch) => {
                             promise::Future::ok(offer)
                         }
@@ -266,7 +286,7 @@ impl MimeClipboard {
                     match result {
                         Ok((offer, data)) => {
                             reply.data = data;
-                            reply.valid = Some(Arc::new(move || offer.valid()));
+                            reply.valid = Some(offer_validity(offer));
                         }
                         Err(err) => {
                             if let Some(status) = read_error(&err) {
@@ -363,9 +383,27 @@ impl MimeClipboard {
             }
         };
         let future = self.window.clipboard_offer(clipboard);
+        #[cfg(target_os = "linux")]
+        let file_paste = tw.config.enable_osc5522_file_paste;
+        #[cfg(target_os = "linux")]
+        let file_limit = tw.config.osc5522_clipboard_read_limit;
         let this = self.clone();
         promise::spawn::spawn(async move {
-            let result = future.await;
+            let result = async {
+                let offer = future.await?;
+                #[cfg(target_os = "linux")]
+                if file_paste {
+                    let generation = this.generation.clone();
+                    return window::clipboard_files::snapshot_offer(
+                        offer,
+                        file_limit,
+                        Arc::new(move || generation.load(Ordering::Acquire) == epoch),
+                    )
+                    .await;
+                }
+                Ok::<_, anyhow::Error>(offer)
+            }
+            .await;
             this.acquiring.store(false, Ordering::Release);
             if this.generation.load(Ordering::Acquire) != epoch || !this.enabled() {
                 return;
@@ -400,7 +438,7 @@ impl MimeClipboard {
                                 session.offer = Some(offer.clone());
                                 session.epoch = epoch;
                                 reply.epoch = epoch;
-                                reply.valid = Some(Arc::new(move || offer.valid()));
+                                reply.valid = Some(offer_validity(offer));
                                 reply
                             })
                     };
@@ -408,6 +446,7 @@ impl MimeClipboard {
                     // session locks: parser reset holds terminal then commit.
                     if let Some(reply) = reply {
                         pane.send_reserved_clipboard_response(reply, permit);
+                        this.schedule_expiry();
                     } else {
                         log::warn!("clipboard paste rejected before admission");
                     }
@@ -417,7 +456,54 @@ impl MimeClipboard {
         })
         .detach();
     }
+
+    fn schedule_expiry(self: &Arc<Self>) {
+        let mut deadline = {
+            let _commit = self.commit.lock().unwrap();
+            let session = self.session.lock().unwrap();
+            let deadline = match session.protocol.grant_deadline() {
+                Some(deadline) => deadline,
+                None => return,
+            };
+            if self.expiry_task.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            deadline
+        };
+        let weak = Arc::downgrade(self);
+        promise::spawn::spawn(async move {
+            loop {
+                smol::Timer::at(deadline).await;
+                let this = match weak.upgrade() {
+                    Some(this) => this,
+                    None => return,
+                };
+                // Grant replacement and task termination share the admission
+                // lock, so a replacement cannot lose its expiry wakeup.
+                let _commit = this.commit.lock().unwrap();
+                this.reap();
+                let session = this.session.lock().unwrap();
+                match session.protocol.grant_deadline() {
+                    Some(next) => deadline = next,
+                    None => {
+                        this.expiry_task.store(false, Ordering::Release);
+                        return;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
 }
+
+fn offer_validity(offer: Arc<dyn ClipboardOffer>) -> Arc<dyn Fn() -> bool + Send + Sync> {
+    offer
+        .validity_check()
+        .unwrap_or_else(|| Arc::new(move || offer.valid()))
+}
+
+#[cfg(test)]
+mod tests;
 
 fn read_error(err: &anyhow::Error) -> Option<&'static str> {
     match err.downcast_ref::<ClipboardError>() {

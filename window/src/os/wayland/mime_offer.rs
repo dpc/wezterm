@@ -1,24 +1,15 @@
-use crate::clipboard::{ClipboardData, ClipboardError, ClipboardOffer};
+use crate::clipboard::{ClipboardData, ClipboardError, ClipboardOffer, ReaderPermit};
 use promise::{Future, Promise};
 use smithay_client_toolkit::data_device_manager::data_offer::SelectionOffer;
 use smithay_client_toolkit::data_device_manager::ReadPipe;
 use smithay_client_toolkit::primary_selection::offer::PrimarySelectionOffer;
 use std::io::Read;
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 #[cfg(test)]
 mod tests;
-
-// Bound native workers across reset storms; cancellation is checked every100ms.
-static READERS: AtomicUsize = AtomicUsize::new(0);
-struct ReaderPermit;
-impl Drop for ReaderPermit {
-    fn drop(&mut self) {
-        READERS.fetch_sub(1, Ordering::AcqRel);
-    }
-}
 
 /// A particular protocol object, never a lookup of the current selection.
 #[derive(Clone)]
@@ -70,15 +61,10 @@ impl ClipboardOffer for MimeOffer {
         limit: usize,
         valid: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Future<ClipboardData> {
-        if READERS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < 4).then_some(n + 1)
-            })
-            .is_err()
-        {
-            return Future::err(ClipboardError::Temporary.into());
-        }
-        let permit = ReaderPermit;
+        let permit = match ReaderPermit::acquire() {
+            Ok(permit) => permit,
+            Err(err) => return Future::err(err.into()),
+        };
         let mut promise = Promise::new();
         let future = promise.get_future().unwrap();
         let native = self.native.clone();
@@ -145,7 +131,9 @@ impl ClipboardOffer for MimeOffer {
                     }
                 }
             }
-            let _permit = permit;
+            // Release acquisition capacity before waking a dependent file
+            // snapshot worker, which shares the same four global slots.
+            drop(permit);
             if generation.load(Ordering::Acquire) != epoch || !valid() {
                 promise.err(ClipboardError::Stale.into());
             } else {

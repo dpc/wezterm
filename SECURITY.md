@@ -20,7 +20,33 @@ the exact native offer and all MIME names. Its random UTF-8 password is scoped
 to the GUI attachment, pane, selection location and a 30-second lifetime.
 The first admitted authorized read of an available format consumes it.
 Missing/invalid credentials fall back to configured permissions, not to a
-different grant. Never read files named by URI lists or clipboard bytes.
+different grant. Ambient reads never resolve files named by clipboard bytes.
+
+`enable_osc5522_file_paste` is default-off and separate from ambient permissions.
+When enabled, an ordinary native paste gesture may resolve the exact retained
+offer's `text/uri-list` (or GNOME copied-file metadata) on the workstation and
+snapshot local regular-file bodies. Only `file:` URIs with empty/localhost
+authority are accepted; queries, fragments, malformed escapes and NUL paths are
+rejected. Ordinary symlinks are followed. Linux O_PATH pins the resolved object;
+fstat must identify a regular file before procfs opens that same descriptor for
+reading. Directories, devices, FIFOs and network URLs are not read, and cut never
+deletes. File formats/extensions are not permission filters.
+Pure non-file URI-lists preserve the native offer without file acquisition;
+mixed file/non-file lists and non-file GNOME copied-file entries are rejected.
+
+The private `application/vnd.tau.files-v1` offer carries exact opaque bodies and
+basename-only metadata, never source paths or remote filesystem authority. SSH
+and tmux carry those bytes normally. The aggregate bundle cap is currently
+16MiB including framing, additionally constrained by the configured native read
+limit; it matches Tau's current clipboard acquisition policy, not an OSC5522
+protocol limit. No discretionary file-count cap is added. Any invalid file fails
+the gesture as a whole, before an offer/grant is emitted.
+
+These are bytes read during gesture acquisition, not an atomic filesystem
+snapshot: files may change during a read. Native ownership/lifecycle revocation
+still invalidates the retained offer. No ambient request or prompt-free MIME
+listing creates this synthetic file-body offer. Subsequent authorized reads use
+the captured body, not a later filesystem read.
 
 Retaining a native offer is **not an immutable snapshot**: an owner can alter
 its bytes. Never substitute a newer native offer for an admitted gesture read.
@@ -57,9 +83,31 @@ committing a prefix. Response saturation can leave requests unanswered; it never
 proves successful completion. Reserve an offer slot **before** accepting a
 gesture or replacing its grant. No unsolicited EBUSY is synthesized for a gesture.
 
-Native acquisition has at most 4 workers globally, each with its own configured
+Native and gesture-file acquisition share at most 4 workers globally, each with its own configured
 aggregate cap and a 10-second total deadline; these prebuffers are **additional**
-to queued/active response memory. Native source transfer uses one poll-multiplexed
+to queued/active response memory. File acquisition uses the same existing deadline
+across metadata and bodies, with checks between filesystem operations. A blocking
+filesystem syscall (including a slow mounted filesystem) cannot be forcibly
+interrupted: neither the deadline nor generation checks promise hard filesystem
+cancellation.
+
+Each attachment can retain one gesture file snapshot of at most 16MiB, **in
+addition** to queued/active response memory. A replacement may temporarily hold
+the old snapshot plus the one currently being built, until admission. Snapshot
+inventory validity guards retain only the native identity, not bodies; queued
+MIME listings cannot hide 64 full snapshots outside the payload budget. Revocation
+of the attachment drops the session snapshot immediately; one weak expiry task
+per attachment sleeps to the exact grant deadline, reaping expired snapshots
+even when no request arrives; it stops when no grant remains. Native owner
+changes invalidate authority immediately and release snapshots on reap.
+Grant admission moves the snapshot into its read. Body response allocations
+share the snapshot and remain subject to the existing response payload budget.
+Retained bundle backing capacity equals its accounted length. During acquisition,
+growth requests never exceed the bundle cap, but reallocation/compaction can
+temporarily hold old and new backing allocations (up to twice that cap), in
+addition to bounded metadata bytes/path objects and any previous session snapshot.
+
+Native source transfer uses one poll-multiplexed
 worker with 128 total queued/active pipes, a conservative 256MiB retained-payload
 reference budget, and 10-second inactivity deadlines. Overload refuses the newest
 native pipe with a diagnostic, **without clearing clipboard ownership**. Wayland

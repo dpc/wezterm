@@ -99,6 +99,10 @@ pub struct Config {
     #[dynamic(default)]
     pub allow_osc5522_clipboard_write: bool,
 
+    /// Resolve local copied-file bodies only on an ordinary OSC5522 paste gesture.
+    #[dynamic(default)]
+    pub enable_osc5522_file_paste: bool,
+
     /// Aggregate decoded read resource policy, independent of protocol writes.
     #[dynamic(default = "default_osc5522_read_limit")]
     pub osc5522_clipboard_read_limit: usize,

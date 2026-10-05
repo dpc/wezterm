@@ -1,5 +1,31 @@
 use super::*;
 
+#[test]
+fn gesture_expiry_deadline_tracks_replacement_and_exact_cleanup() {
+    let generation = Arc::new(AtomicU64::new(0));
+    let mut session = ClipboardSession::new(generation);
+    let now = Instant::now();
+    assert_eq!(session.grant_deadline(), None);
+    session
+        .offer("first".into(), vec!["image/png".into()], false, now)
+        .unwrap();
+    assert_eq!(session.grant_deadline(), Some(now + TIMEOUT));
+    let replacement = now + Duration::from_secs(1);
+    session
+        .offer(
+            "second".into(),
+            vec!["image/png".into()],
+            false,
+            replacement,
+        )
+        .unwrap();
+    session.expire(now + TIMEOUT);
+    assert_eq!(session.grant_deadline(), Some(replacement + TIMEOUT));
+    session.expire(replacement + TIMEOUT);
+    assert_eq!(session.grant_deadline(), None);
+    assert!(!session.has_grant());
+}
+
 fn session() -> ClipboardSession {
     ClipboardSession::new(Arc::new(AtomicU64::new(0)))
 }

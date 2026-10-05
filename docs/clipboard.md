@@ -19,6 +19,8 @@ panes.
 config.allow_osc5522_clipboard_read = false
 config.allow_osc5522_clipboard_write = false
 config.osc5522_clipboard_read_limit = 64 * 1024 * 1024
+-- Opt in to regular-file bodies on ordinary native paste gestures only.
+config.enable_osc5522_file_paste = false
 ```
 
 With these defaults, an application can list MIME names but must receive a
@@ -44,7 +46,52 @@ available native MIME name, not only image/text types.
 Gesture reads retain the original Wayland offer rather than eagerly copying every
 format. Owner changes cancel it; a later clipboard owner's contents are never
 substituted. This is not an immutable byte snapshot. `text/uri-list` and file
-metadata are just bytes: WezTerm does not open referenced files.
+metadata are just bytes by default: WezTerm does not open referenced files
+unless `enable_osc5522_file_paste` is enabled for ordinary native paste gestures.
+
+## Copied files, including across SSH
+
+With `enable_osc5522_file_paste = true`, copying local files in a file manager
+and using the normal terminal paste action captures their bodies on the
+workstation. WezTerm advertises an additional private
+`application/vnd.tau.files-v1` format to that gesture's application. An ordinary
+SSH connection and protocol-aware, correctly fenced tmux carry actual file
+bytes to Tau; the remote host does not reinterpret workstation paths. Ambient
+read permission and MIME listing never create this file-body format.
+An ordinary URI-list containing only non-file URLs keeps its native clipboard
+formats unchanged, so copying a browser URL still follows normal text paste.
+
+Local regular files of any type are supported, without an extension/MIME
+whitelist. Symlinks follow normal local resolution, but the opened object must
+be regular. Directories, devices, FIFOs and network URLs are refused; a copied
+`cut` entry is read, never deleted. Malformed paths or one failing file reject
+the whole paste. The current decoded bundle limit is 16MiB **including
+filenames and framing**, further constrained by `osc5522_clipboard_read_limit`.
+There is no separate file-count limit. Tau's artifact limit is a distinct
+per-file 16MiB policy. These limits are not limitations of SSH or OSC5522.
+
+The retained bundle contains the bytes acquired while handling the gesture, not
+an atomic filesystem snapshot. Files can change during acquisition. The native
+owner and lifecycle checks still revoke the offer; an authorized read never
+opens the files again. Filesystem checks run on bounded workers off the GUI
+thread, but a blocking filesystem syscall cannot be forcibly interrupted.
+See [SECURITY.md](../SECURITY.md) for memory ownership and cancellation boundaries.
+
+The versioned private body format uses unsigned big-endian lengths:
+
+```text
+"TAUFILES\0" (9 bytes), u32 file_count
+repeat file_count times:
+    u16 basename_length, u16 mime_length, u64 body_length
+    UTF-8 basename, optional ASCII MIME hint, opaque body bytes
+EOF (no trailing bytes)
+```
+
+At least one file is required. Names are basenames only, excluding empty names,
+`.`/`..`, separators and controls. Duplicates preserve order. The producer leaves
+MIME hints empty rather than guessing media types. Names/MIME hints never confer
+authority, execution or rendering permission. Consumers must validate complete
+framing and correlated DONE before publishing results.
 
 Native reads prebuffer before OK. An unsupported location returns ENOSYS, policy
 denial EPERM and temporary failure EBUSY. Permanent native read I/O failure has no
