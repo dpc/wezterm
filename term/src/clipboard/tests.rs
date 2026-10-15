@@ -1,6 +1,158 @@
 use super::*;
 
 #[test]
+fn file_export_has_dedicated_family_and_raw_mime_stays_opaque() {
+    let mut s = session();
+    let mime = STANDARD.encode("application/vnd.tau.file-export-v1");
+    assert!(handle(&mut s, "type=write-file:id=file", None).is_none());
+    assert_eq!(status(handle(&mut s, "type=wdata:id=file", None)), "EBUSY");
+    assert_eq!(
+        status(handle(&mut s, "type=write-file-data:id=other", None)),
+        "EBUSY"
+    );
+    assert_eq!(
+        status(handle(&mut s, "type=write-file-data", None)),
+        "EINVAL"
+    );
+    assert!(handle(
+        &mut s,
+        &format!("type=write-file-data:id=file:mime={mime}"),
+        Some("AAE="),
+    )
+    .is_none());
+    match handle(&mut s, "type=write-file-data:id=file", None) {
+        Some(ClipboardAction::Write {
+            file_export, data, ..
+        }) => {
+            assert!(file_export);
+            assert_eq!(
+                data["application/vnd.tau.file-export-v1"].as_slice(),
+                &[0, 1]
+            );
+        }
+        _ => panic!("missing file operation"),
+    }
+    let mut s = session();
+    handle(&mut s, "type=write:id=raw", None);
+    assert_eq!(
+        status(handle(&mut s, "type=write-file-data:id=raw", None)),
+        "EBUSY"
+    );
+    handle(
+        &mut s,
+        &format!("type=wdata:id=raw:mime={mime}"),
+        Some("AAE="),
+    );
+    match handle(&mut s, "type=wdata:id=raw", None) {
+        Some(ClipboardAction::Write {
+            file_export, data, ..
+        }) => {
+            assert!(!file_export);
+            assert_eq!(
+                data["application/vnd.tau.file-export-v1"].as_slice(),
+                &[0, 1]
+            );
+        }
+        _ => panic!("missing raw operation"),
+    }
+}
+
+#[test]
+fn file_export_rejects_unknown_keys_aliases_bad_ids_and_drains_failures() {
+    let mut s = session();
+    for meta in [
+        "type=write-file",
+        "type=write-file:id=a!",
+        "type=write-file:id=f:loc=primary",
+        "type=write-file:id=f:name=eA==",
+        "type=write-file:id=f:extra=1",
+        "type=write-file:id=f:id=f",
+    ] {
+        assert_eq!(status(handle(&mut s, meta, None)), "EINVAL", "{meta}");
+    }
+    handle(&mut s, "type=write-file:id=f", None);
+    assert_eq!(
+        status(handle(&mut s, "type=walias:id=f", Some("eA=="))),
+        "EBUSY"
+    );
+    let mime = STANDARD.encode("application/vnd.tau.file-export-v1");
+    handle(
+        &mut s,
+        &format!("type=write-file-data:id=f:mime={mime}"),
+        Some("eA=="),
+    );
+    assert_eq!(
+        status(handle(
+            &mut s,
+            "type=write-file-data:id=f:unexpected=x",
+            None
+        )),
+        "EINVAL"
+    );
+    assert!(handle(&mut s, "type=write-file-data:id=f", None).is_none());
+    handle(&mut s, "type=write-file:id=f", None);
+    assert_eq!(
+        status(handle(&mut s, "type=write-file-data:id=f", Some(""))),
+        "EINVAL"
+    );
+}
+
+#[test]
+fn file_export_permission_cancellation_and_dedicated_response() {
+    let mut s = session();
+    let action = s.handle(
+        &packet("type=write-file:id=f", None),
+        false,
+        false,
+        Instant::now(),
+    );
+    let reply = match action {
+        Some(ClipboardAction::Reply(reply)) => reply,
+        _ => panic!(),
+    };
+    let mut wire = vec![];
+    reply.write_to(&mut wire).unwrap();
+    assert_eq!(wire, b"\x1b]5522;type=write-file:id=f:status=EPERM\x1b\\");
+    handle(&mut s, "type=write-file:id=f", None);
+    s.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(handle(&mut s, "type=write-file-data:id=f", None).is_none());
+}
+
+#[test]
+fn unsafe_file_ids_never_normalize_into_a_live_transaction() {
+    let mut s = session();
+    handle(&mut s, "type=write-file:id=f", None);
+    for packet in [
+        "type=write-file-data:id=f!",
+        "type=write-file-data:id=f!:unexpected=x",
+        "type=write-file-data:id=f!:id=f!",
+        "type=write-file-data",
+    ] {
+        match handle(&mut s, packet, None) {
+            Some(ClipboardAction::Reply(reply)) => {
+                assert_eq!(reply.error, Some("EINVAL"));
+                assert_eq!(reply.id, "");
+            }
+            _ => panic!("expected uncorrelated rejection"),
+        }
+        assert_eq!(s.write.as_ref().unwrap().id, "f");
+    }
+    let mime = STANDARD.encode("application/vnd.tau.file-export-v1");
+    handle(
+        &mut s,
+        &format!("type=write-file-data:id=f:mime={mime}"),
+        Some("eA=="),
+    );
+    assert!(matches!(
+        handle(&mut s, "type=write-file-data:id=f", None),
+        Some(ClipboardAction::Write {
+            file_export: true,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn gesture_expiry_deadline_tracks_replacement_and_exact_cleanup() {
     let generation = Arc::new(AtomicU64::new(0));
     let mut session = ClipboardSession::new(generation);
@@ -572,7 +724,8 @@ fn zero_write_is_failure_never_done() {
 
 #[test]
 fn shared_v2_wire_fixtures_frame_at_arbitrary_transport_boundaries_and_redact_debug() {
-    use wezterm_escape_parser::{parser::Parser, Action, OperatingSystemCommand};
+    use wezterm_escape_parser::parser::Parser;
+    use wezterm_escape_parser::{Action, OperatingSystemCommand};
     let fixtures: serde_json::Value =
         serde_json::from_str(include_str!("../../tests/data/osc5522-transcripts-v2.json")).unwrap();
     let mut count = 0;
@@ -693,4 +846,46 @@ fn oversized_frame_aborts_write_and_does_not_dispatch_truncated_base64() {
         "EINVAL"
     );
     assert!(s.write.is_none());
+}
+
+#[test]
+fn file_packets_keep_parser_corruption_and_fragmentation_fences() {
+    let mime = STANDARD.encode("application/vnd.tau.file-export-v1");
+    for suffix in [
+        b"\0\x1b\\".as_slice(),
+        b"\n\x1b\\",
+        b"\x18",
+        b"\x1a",
+        b"\x1b[0m",
+    ] {
+        let mut parser = wezterm_escape_parser::parser::Parser::new();
+        let mut s = session();
+        parse_into_session(&mut parser, &mut s, b"\x1b]5522;type=write-file:id=f\x1b\\");
+        let mut bytes = format!("\x1b]5522;type=write-file-data:id=f:mime={mime};YW").into_bytes();
+        bytes.extend_from_slice(suffix);
+        assert_eq!(
+            status(parse_into_session(&mut parser, &mut s, &bytes).pop()),
+            "EINVAL"
+        );
+        assert!(s.write.is_none());
+    }
+    let mut parser = wezterm_escape_parser::parser::Parser::new();
+    let mut s = session();
+    let wire = format!(
+        "\x1b]5522;type=write-file:id=f\x1b\\\
+         \x1b]5522;type=write-file-data:id=f:mime={mime};YWJj\x1b\\\
+         \x1b]5522;type=write-file-data:id=f\x1b\\"
+    );
+    let mut actions = vec![];
+    for byte in wire.bytes() {
+        actions.extend(parse_into_session(&mut parser, &mut s, &[byte]));
+    }
+    assert!(matches!(
+        actions.pop(),
+        Some(ClipboardAction::Write {
+            file_export: true,
+            ..
+        })
+    ));
+    assert!(actions.is_empty());
 }

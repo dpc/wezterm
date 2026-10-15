@@ -1,5 +1,70 @@
 # MIME clipboard access (OSC5522)
 
+## Exporting an artifact as a desktop file
+
+This fork also supports an explicit, private **file export** operation. Updated
+Tau clients use `:export-to-clipboard KEY --file [--name BASENAME]` to send an
+artifact body, not a remote path. With clipboard writes already permitted,
+WezTerm stages a local file and offers `text/uri-list`,
+`x-special/gnome-copied-files` with `copy`, and
+`application/x-kde-cutselection` with `0`. A desktop file manager can then paste
+the file. This does not change raw MIME export or the inbound file-paste option,
+and does not enable clipboard writes automatically.
+
+**Paste within one hour.** Local staging paths expire one hour after creation,
+including when WezTerm still owns the clipboard. Clipboard managers do not extend
+this lifetime. Up to 32 files (each at most 16MiB) can be staged across cooperating
+WezTerm processes; a full staging cache fails with EBUSY rather than deleting
+earlier files. Files are private to your user, under `XDG_RUNTIME_DIR`, not saved
+permanently. Cleanup runs every minute after an export and before new exports.
+After exit/crash, leftovers count against the quota until a later sweep or logout.
+Missing or unsafe runtime directories fail rather than falling back to `/tmp`.
+
+The terminal ACK means the local file and native copy offer were published; it
+does not mean the file manager has pasted it. A timeout after commit can have an
+unknown outcome: do not automatically retry or fall back to raw writes.
+All tmux hops and the workstation terminal must support the private protocol.
+Older versions ignore it and time out without changing an existing raw write.
+
+### Private wire contract
+
+This is a fork extension, not a claim about upstream OSC5522 support:
+
+```text
+OSC 5522;type=write-file:id=FRESH_ID ST
+OSC 5522;type=write-file-data:id=FRESH_ID:mime=BASE64(application/vnd.tau.file-export-v1);BASE64(chunk) ST
+...same ID and MIME on every chunk...
+OSC 5522;type=write-file-data:id=FRESH_ID ST
+OSC 5522;type=write-file:id=FRESH_ID:status=DONE ST
+```
+
+There is no admission handshake. Errors use the same file response type and
+existing statuses. IDs contain only `[a-zA-Z0-9-_+.]` and must be nonempty and
+match exactly; unknown/duplicate metadata, locations and aliases are rejected.
+The commit has no payload separator. Raw `write/wdata/walias` remains opaque even
+when its MIME name is the private export name.
+
+The envelope is `TAUFILES\0` (nine bytes), u32BE count=1, u16BE basename length,
+u16BE MIME-hint length, u64BE body length, then basename, hint and body with exact
+EOF. The UTF-8 basename is 1–255 bytes, excludes dot/dotdot, separators and control
+characters. The optional hint is at most 255 ASCII bytes of `type/subtype`, without
+parameters. It neither selects a handler nor changes file permissions.
+The original body may be a full 16MiB; envelope overhead is additional, at most
+535 bytes. No source path or remote URI is accepted.
+
+### Isolated verification
+
+Use a separate headless compositor, private `XDG_RUNTIME_DIR`, isolated D-Bus
+session and disposable file-manager destination. Never point tests at a running
+desktop clipboard. Check both the native offered MIME bytes and an actual
+file-manager paste with an opaque binary body and a UTF-8 filename requiring URI
+escaping. Repeat through SSH and upgraded/nested tmux. Test an old hop with a
+pending raw transaction to ensure all file packets are ignored rather than
+appended to that transaction. ACK-only and synthetic framing tests are not
+substitutes for a file-manager paste.
+
+## Raw MIME access
+
 This fork supports the [Kitty clipboard extension](https://sw.kovidgoyal.net/kitty/clipboard/)
 and [mode 5522 paste events](https://rockorager.dev/misc/bracketed-paste-mime/)
 inside the existing WezTerm process. Native Wayland clipboard APIs supply arbitrary

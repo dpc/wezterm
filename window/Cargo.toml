@@ -42,6 +42,7 @@ serde = {workspace=true, features = ["rc", "derive"]}
 tiny-skia.workspace = true
 glium.workspace = true
 url.workspace = true
+tempfile.workspace = true
 wezterm-bidi.workspace = true
 wezterm-color-types.workspace = true
 wezterm-font.workspace = true

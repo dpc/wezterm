@@ -12,6 +12,8 @@ pub mod bitmaps;
 pub mod clipboard;
 #[cfg(target_os = "linux")]
 pub mod clipboard_files;
+#[cfg(target_os = "linux")]
+pub mod clipboard_export;
 pub use wezterm_color_types as color;
 mod configuration;
 pub mod connection;

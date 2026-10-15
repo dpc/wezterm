@@ -1,6 +1,7 @@
 //! OSC5522 GUI attachment. Native offers stay inside this process.
 use super::{TermWindow, TermWindowNotif};
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use mux::pane::{Pane, PaneId};
 use mux::Mux;
 use std::collections::HashSet;
@@ -304,17 +305,27 @@ impl MimeClipboard {
             ClipboardAction::Write {
                 id,
                 primary,
+                file_export,
                 data,
                 busy,
             } => {
-                let mut reply = self
-                    .session
-                    .lock()
-                    .unwrap()
-                    .protocol
-                    .response("write", id, None);
+                let mut reply = self.session.lock().unwrap().protocol.response(
+                    if file_export { "write-file" } else { "write" },
+                    id,
+                    None,
+                );
                 reply.epoch = epoch;
                 reply.busy = Some(busy);
+                if file_export {
+                    #[cfg(target_os = "linux")]
+                    self.export_file(data, reply, epoch);
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        reply.error = Some("ENOSYS");
+                        self.send(reply);
+                    }
+                    return;
+                }
                 let future = {
                     // Native Wayland publication occurs synchronously in this
                     // method, before the returned result future is awaited.
@@ -353,6 +364,68 @@ impl MimeClipboard {
                 .detach();
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn export_file(
+        self: &Arc<Self>,
+        data: window::clipboard::ClipboardData,
+        mut reply: ClipboardResponse,
+        epoch: u64,
+    ) {
+        let this = self.clone();
+        let generation = self.generation.clone();
+        let preparation = window::clipboard_export::prepare(
+            data,
+            Arc::new(move || generation.load(Ordering::Acquire) == epoch),
+        );
+        promise::spawn::spawn(async move {
+            let prepared = match preparation.await {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    reply.error = Some(if err.is::<window::clipboard_export::InvalidExport>() {
+                        "EINVAL"
+                    } else {
+                        match err.downcast_ref::<ClipboardError>() {
+                            Some(ClipboardError::Temporary) => "EBUSY",
+                            Some(ClipboardError::Stale) => "EPERM",
+                            _ => "EIO",
+                        }
+                    });
+                    this.send(reply);
+                    return;
+                }
+            };
+            let window = this.window.clone();
+            window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                let future = {
+                    // File I/O never holds this lock. Re-check focus, permission,
+                    // attachment and captured epoch immediately before publication.
+                    let _commit = this.commit.lock().unwrap();
+                    if !this.active(tw, epoch) || !tw.config.allow_osc5522_clipboard_write {
+                        return; // PreparedExport drops and removes unpublished files.
+                    }
+                    if prepared.expired() {
+                        // No filesystem work or terminal/output lock under commit.
+                        drop(_commit);
+                        reply.error = Some("EBUSY");
+                        this.send(reply);
+                        return;
+                    }
+                    this.window
+                        .set_mime_clipboard(Clipboard::Clipboard, prepared.data.clone())
+                };
+                promise::spawn::spawn(async move {
+                    match future.await {
+                        Ok(()) => prepared.retain(),
+                        Err(_) => reply.error = Some("EIO"),
+                    }
+                    this.send(reply);
+                })
+                .detach();
+            })));
+        })
+        .detach();
     }
 
     fn paste(self: &Arc<Self>, tw: &TermWindow, clipboard: Clipboard) {

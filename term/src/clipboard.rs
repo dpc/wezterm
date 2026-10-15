@@ -3,7 +3,8 @@
 //! Native clipboard access and user permission decisions belong to the GUI.
 #[cfg(test)]
 mod tests;
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -148,6 +149,8 @@ pub enum ClipboardAction {
     Write {
         id: String,
         primary: bool,
+        /// Explicit private file operation; ordinary MIME writes stay opaque.
+        file_export: bool,
         data: ClipboardData,
         busy: Arc<AtomicBool>,
     },
@@ -173,6 +176,8 @@ struct PendingWrite {
     id: String,
     /// Target selection.
     primary: bool,
+    /// Separates private file packets from ordinary MIME transactions.
+    file_export: bool,
     /// Completed formats.
     data: ClipboardData,
     /// Current format, if any.
@@ -205,6 +210,9 @@ impl PendingWrite {
     }
 
     fn append(&mut self, mime: String, payload: &[u8]) -> Result<(), &'static str> {
+        if self.file_export && mime != "application/vnd.tau.file-export-v1" {
+            return Err("EINVAL");
+        }
         if self.mime.as_ref() != Some(&mime) {
             self.finish_type()?;
             if self.data.contains_key(&mime) || self.data.len() >= 1024 {
@@ -221,7 +229,12 @@ impl PendingWrite {
                 let decoded = STANDARD.decode(&self.tail).map_err(|_| "EINVAL")?;
                 self.padded = self.tail.contains(&b'=');
                 self.size = self.size.checked_add(decoded.len()).ok_or("EFBIG")?;
-                if self.size > WRITE_LIMIT {
+                let limit = if self.file_export {
+                    16 * 1024 * 1024 + 535
+                } else {
+                    WRITE_LIMIT
+                };
+                if self.size > limit {
                     return Err("EFBIG");
                 }
                 self.bytes.extend(decoded);
@@ -416,43 +429,65 @@ impl ClipboardSession {
             }
         }
         let kind = *values.get("type")?;
+        let file_export = matches!(kind, "write-file" | "write-file-data");
+        if file_export && !safe_file_id(values.get("id").copied().unwrap_or("").as_bytes()) {
+            // Never normalize an unsafe ID into a different live transaction.
+            return Some(ClipboardAction::Reply(self.response(
+                "write-file",
+                String::new(),
+                Some("EINVAL"),
+            )));
+        }
         let id: String = values
             .get("id")
             .unwrap_or(&"")
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || "-_+.".contains(*c))
             .collect();
-        if !matches!(kind, "read" | "write" | "wdata" | "walias") {
+        if !matches!(
+            kind,
+            "read" | "write" | "wdata" | "walias" | "write-file" | "write-file-data"
+        ) {
             return None;
         }
-        if matches!(kind, "wdata" | "walias") {
+        let reply_kind = if file_export { "write-file" } else { "write" };
+        if file_export
+            && values.keys().any(|key| {
+                !(matches!(*key, "type" | "id") || kind == "write-file-data" && *key == "mime")
+            })
+        {
+            return self.malformed(fields);
+        }
+        if matches!(kind, "wdata" | "walias" | "write-file-data") {
             let write = self.write.as_ref()?; // drain before any continuation errors
-            if !id.is_empty() && id != write.id {
+            if file_export != write.file_export
+                || ((file_export || !id.is_empty()) && id != write.id)
+            {
                 return Some(ClipboardAction::Reply(self.response(
-                    "write",
+                    reply_kind,
                     id,
                     Some("EBUSY"),
                 )));
             }
         }
-        if kind == "write" && self.is_busy() {
+        if matches!(kind, "write" | "write-file") && self.is_busy() {
             return Some(ClipboardAction::Reply(self.response(
-                "write",
+                reply_kind,
                 id,
                 Some("EBUSY"),
             )));
         }
         let primary = match values.get("loc").copied() {
             None => false,
-            Some("primary") => true,
+            Some("primary") if !file_export => true,
             _ => {
-                let id = if matches!(kind, "wdata" | "walias") {
+                let id = if matches!(kind, "wdata" | "walias" | "write-file-data") {
                     self.write.take().unwrap().id
                 } else {
                     id
                 };
                 return Some(ClipboardAction::Reply(self.response(
-                    if kind == "read" { "read" } else { "write" },
+                    if kind == "read" { "read" } else { reply_kind },
                     id,
                     Some("ENOSYS"),
                 )));
@@ -527,11 +562,11 @@ impl ClipboardSession {
                 busy,
             });
         }
-        if kind == "write" {
+        if matches!(kind, "write" | "write-file") {
             // A fresh write resets drain state, but cannot steal an active transaction.
             if self.is_busy() {
                 return Some(ClipboardAction::Reply(self.response(
-                    "write",
+                    reply_kind,
                     id,
                     Some("EBUSY"),
                 )));
@@ -539,14 +574,14 @@ impl ClipboardSession {
             if !writes_allowed {
                 self.write = None;
                 return Some(ClipboardAction::Reply(self.response(
-                    "write",
+                    reply_kind,
                     id,
                     Some("EPERM"),
                 )));
             }
-            if !payload.is_empty() || fields.len() > 2 {
+            if !payload.is_empty() || fields.len() > 2 || (file_export && fields.len() != 1) {
                 return Some(ClipboardAction::Reply(self.response(
-                    "write",
+                    reply_kind,
                     id,
                     Some("EINVAL"),
                 )));
@@ -554,6 +589,7 @@ impl ClipboardSession {
             self.write = Some(PendingWrite {
                 id,
                 primary,
+                file_export,
                 data: BTreeMap::new(),
                 mime: None,
                 bytes: Vec::new(),
@@ -565,19 +601,19 @@ impl ClipboardSession {
             });
             return None;
         }
-        if kind != "wdata" && kind != "walias" {
+        if !matches!(kind, "wdata" | "walias" | "write-file-data") {
             return None;
         }
         let mut write = self.write.take()?; // absent means drain after failure/reset
         if !writes_allowed {
             return Some(ClipboardAction::Reply(self.response(
-                "write",
+                reply_kind,
                 write.id,
                 Some("EPERM"),
             )));
         }
         if !id.is_empty() && id != write.id {
-            let reply = self.response("write", id, Some("EBUSY"));
+            let reply = self.response(reply_kind, id, Some("EBUSY"));
             self.write = Some(write);
             return Some(ClipboardAction::Reply(reply));
         }
@@ -589,11 +625,17 @@ impl ClipboardSession {
                 .get("mime")
                 .map(|v| decode_mime(v.as_bytes()).ok_or("EINVAL"))
                 .transpose()?;
-            if kind == "wdata" {
+            if file_export && fields.len() != if mime.is_some() { 2 } else { 1 } {
+                return Err("EINVAL");
+            }
+            if matches!(kind, "wdata" | "write-file-data") {
                 match mime {
                     Some(mime) => write.append(mime, payload)?,
                     None if payload.is_empty() => {
                         write.finish_type()?;
+                        if file_export && write.data.len() != 1 {
+                            return Err("EINVAL");
+                        }
                         for (alias, target) in &write.aliases {
                             let data = write.data.get(target).ok_or("EINVAL")?.clone();
                             if write.data.contains_key(alias) {
@@ -621,7 +663,7 @@ impl ClipboardSession {
         })();
         match result {
             Err(error) => Some(ClipboardAction::Reply(self.response(
-                "write",
+                reply_kind,
                 write.id,
                 Some(error),
             ))),
@@ -630,6 +672,7 @@ impl ClipboardSession {
                 Some(ClipboardAction::Write {
                     id: write.id,
                     primary: write.primary,
+                    file_export: write.file_export,
                     data: write.data,
                     busy,
                 })
@@ -662,6 +705,18 @@ impl ClipboardSession {
         let kind = meta
             .split(|b| *b == b':')
             .find_map(|p| p.strip_prefix(b"type="))?;
+        let file_export = matches!(kind, b"write-file" | b"write-file-data");
+        let original_id = meta
+            .split(|b| *b == b':')
+            .find_map(|p| p.strip_prefix(b"id="))
+            .unwrap_or_default();
+        if file_export && !safe_file_id(original_id) {
+            return Some(ClipboardAction::Reply(self.response(
+                "write-file",
+                String::new(),
+                Some("EINVAL"),
+            )));
+        }
         let id: String = meta
             .split(|b| *b == b':')
             .find_map(|p| p.strip_prefix(b"id="))
@@ -671,31 +726,39 @@ impl ClipboardSession {
             .filter(|b| b.is_ascii_alphanumeric() || b"-_+.".contains(b))
             .map(char::from)
             .collect();
-        if kind == b"write" {
+        let reply_kind = if file_export { "write-file" } else { "write" };
+        if kind == b"write" || kind == b"write-file" {
             return Some(ClipboardAction::Reply(self.response(
-                "write",
+                reply_kind,
                 id,
                 Some(if self.is_busy() { "EBUSY" } else { "EINVAL" }),
             )));
         }
-        if kind != b"wdata" && kind != b"walias" {
+        if kind != b"wdata" && kind != b"walias" && kind != b"write-file-data" {
             return None;
         }
         let write = self.write.as_ref()?;
-        if !id.is_empty() && id != write.id {
+        if file_export != write.file_export || ((file_export || !id.is_empty()) && id != write.id) {
             return Some(ClipboardAction::Reply(self.response(
-                "write",
+                reply_kind,
                 id,
                 Some("EBUSY"),
             )));
         }
         let id = self.write.take().unwrap().id;
         Some(ClipboardAction::Reply(self.response(
-            "write",
+            reply_kind,
             id,
             Some("EINVAL"),
         )))
     }
+}
+
+fn safe_file_id(id: &[u8]) -> bool {
+    !id.is_empty()
+        && id
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_+.".contains(b))
 }
 
 fn valid_mime(mime: &str) -> bool {

@@ -55,6 +55,52 @@ the old object to a new generation while awaiting compositor confirmation.
 Pinned SCTK0.19.2 omits its ordinary-selection NULL callback; our narrow dispatch
 shim forwards that event after the toolkit updates its cache.
 
+### Explicit outbound file export
+
+The private `write-file` / `write-file-data` / `write-file` response family
+requires the existing write permission and a fresh, nonempty safe ID on every
+packet. It is not activated by a MIME name in an ordinary write. Old forks drop
+both new request types; no ordinary `wdata` fallback or permission widening is
+permitted. Raw and file continuations cannot append to each other's transactions.
+Metadata keys are exact: opener `type,id`, data `type,id,mime`, commit `type,id`.
+Location, aliases, duplicate keys and unknown metadata are rejected.
+
+Only one `application/vnd.tau.file-export-v1` body is accepted. Its TAUFILES
+envelope has exactly one file, a UTF-8 basename of at most 255 bytes, an optional
+ASCII MIME hint of at most 255 bytes, and an opaque body of at most 16MiB.
+The maximum envelope is 16MiB + 535 bytes, unlike the ingress aggregate cap.
+Empty/dot/dotdot names, separators and control characters are rejected.
+No supplied URI, source path, filename extension, or MIME hint grants local
+filesystem authority. The hint does not select a handler or execute anything.
+
+Four shared acquisition workers bound asynchronous staging. Files are created
+exclusively as 0600 in private 0700 directories below a validated, same-user,
+non-symlink `XDG_RUNTIME_DIR/wezterm-file-export-v1`. Missing/unsafe runtime
+directories fail closed. A nonblocking filesystem lock bounds all cooperating
+processes to 32 export directories (at most 512MiB of bodies), including pending
+and crashed exports. Saturation returns EBUSY instead of evicting existing files.
+Failures before publication remove partial directories and release their slots.
+Pending GUI publications retain a per-directory lease against the reaper and
+must pass a monotonic expiry check before publication; a delayed callback cannot
+publish an already-reaped path.
+Filesystem calls are not forcibly interruptible; the ten-second worker deadline
+and generation checks run between operations, never under the publication lock.
+
+The GUI rechecks the captured generation, focus, attachment and write permission
+under the existing commit lock before publishing locally generated URI-list,
+GNOME copied-file and KDE copy metadata. DONE means staging and synchronous native
+publication succeeded, **not** that a destination pasted the file or that the
+compositor confirmed ownership. Lost replies/cancellation after publication leave
+the outcome unknown. No live desktop clipboard is consulted during staging.
+
+Staged paths have a **hard one-hour lifetime from creation, even while the
+clipboard still references them**. Ownership loss does not shorten that lifetime:
+clipboard managers may retain the URI. A running exporting process sweeps every
+60 seconds, and each new export sweeps before admission. Entries surviving process
+exit/crash remain counted and are cleaned on a later sweep/export or runtime
+directory removal at logout; without a running process cleanup is not promised
+at the one-hour instant. There is no indefinite clipboard-manager paste guarantee.
+
 Focus/pane/overlay changes, mode-off, resets, replacement, destruction and
 disconnect revoke authority. Soft reset preserves the mode but revokes its work.
 Capture the request/gesture epoch before queuing GUI work: stale work must never
