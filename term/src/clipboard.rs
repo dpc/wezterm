@@ -247,7 +247,7 @@ impl PendingWrite {
 
 /// Pure protocol state for one GUI attachment; never logs secrets or payloads.
 pub struct ClipboardSession {
-    /// Shared epoch, incremented synchronously by terminal reset/focus hooks.
+    /// Shared epoch, incremented synchronously by reset and pane-handoff hooks.
     pub generation: Arc<AtomicU64>,
     /// Epoch represented by stored state.
     epoch: u64,

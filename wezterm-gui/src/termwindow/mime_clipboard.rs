@@ -161,7 +161,6 @@ impl MimeClipboard {
     fn active(&self, tw: &TermWindow, epoch: u64) -> bool {
         self.supported()
             && self.generation.load(Ordering::Acquire) == epoch
-            && tw.focused.is_some()
             && tw
                 .get_active_pane_or_overlay()
                 .is_some_and(|p| p.pane_id() == self.pane_id)
@@ -190,7 +189,11 @@ impl MimeClipboard {
             let mut session = self.session.lock().unwrap();
             session.protocol.handle_for_epoch(
                 &fields,
-                tw.config.allow_osc5522_clipboard_read && self.active(tw, epoch),
+                // A fresh ambient read still needs focus. A valid gesture token
+                // authorizes its retained offer independently of this fallback.
+                tw.config.allow_osc5522_clipboard_read
+                    && tw.focused.is_some()
+                    && self.active(tw, epoch),
                 tw.config.allow_osc5522_clipboard_write && self.active(tw, epoch),
                 Instant::now(),
                 epoch,
@@ -399,7 +402,7 @@ impl MimeClipboard {
             let window = this.window.clone();
             window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                 let future = {
-                    // File I/O never holds this lock. Re-check focus, permission,
+                    // File I/O never holds this lock. Re-check active pane, permission,
                     // attachment and captured epoch immediately before publication.
                     let _commit = this.commit.lock().unwrap();
                     if !this.active(tw, epoch) || !tw.config.allow_osc5522_clipboard_write {
@@ -431,7 +434,9 @@ impl MimeClipboard {
     fn paste(self: &Arc<Self>, tw: &TermWindow, clipboard: Clipboard) {
         self.reap();
         let epoch = self.generation.load(Ordering::Acquire);
-        if !self.active(tw, epoch) {
+        // A new gesture requires focused input routing. Once accepted, its exact
+        // native offer and lifecycle epoch, not window focus, bound the work.
+        if tw.focused.is_none() || !self.active(tw, epoch) {
             return;
         }
         if self.session.lock().unwrap().protocol.is_busy()

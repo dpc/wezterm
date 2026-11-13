@@ -534,6 +534,10 @@ impl Pane for LocalPane {
         self.terminal.lock().focus_changed(focused);
     }
 
+    fn window_focus_changed(&self, focused: bool) {
+        self.terminal.lock().window_focus_changed(focused);
+    }
+
     fn has_unseen_output(&self) -> bool {
         self.terminal.lock().has_unseen_output()
     }

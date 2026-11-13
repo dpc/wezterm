@@ -86,8 +86,8 @@ publish an already-reaped path.
 Filesystem calls are not forcibly interruptible; the ten-second worker deadline
 and generation checks run between operations, never under the publication lock.
 
-The GUI rechecks the captured generation, focus, attachment and write permission
-under the existing commit lock before publishing locally generated URI-list,
+Under the existing commit lock, the GUI rechecks the captured generation, pane
+activity, attachment and write permission before publishing locally generated URI-list,
 GNOME copied-file and KDE copy metadata. DONE means staging and synchronous native
 publication succeeded, **not** that a destination pasted the file or that the
 compositor confirmed ownership. Lost replies/cancellation after publication leave
@@ -101,13 +101,22 @@ exit/crash remain counted and are cleaned on a later sweep/export or runtime
 directory removal at logout; without a running process cleanup is not promised
 at the one-hour instant. There is no indefinite clipboard-manager paste guarantee.
 
-Focus/pane/overlay changes, mode-off, resets, replacement, destruction and
+Pane/overlay changes, mode-off, resets, replacement, destruction and
 disconnect revoke authority. Soft reset preserves the mode but revokes its work.
 Capture the request/gesture epoch before queuing GUI work: stale work must never
 adopt a new epoch. Native commit and revocation share a lock; release it and the
 session lock before taking the terminal/output lock. Do not promise observation
 of remote shell foreground-process changes; applications must disable before
 handoff.
+
+OS window focus changes do not revoke accepted clipboard work. A paste gesture must start in the focused active pane. It captures the exact
+native offer synchronously, rather than looking up the current selection later. Its one-use,
+time-limited grant and pending reads can finish across focus loss; native selection
+replacement or clearing still revokes that offer. Fresh ambient reads require
+configured read permission and a focused pane. Configured writes may start or
+finish while the window is unfocused, but not from an inactive pane. Hard lifecycle
+revocation cancels admitted work. Mode-off does not deny fresh writes allowed by
+configuration.
 
 ## Bounds and errors
 

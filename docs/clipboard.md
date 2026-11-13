@@ -166,7 +166,15 @@ interval can return EBUSY. Consumers must discard incomplete or stale-ID data.
 
 ## Operational limitations
 
-Mode-off/reset/focus changes revoke pending authority, not bytes already written.
+Mode-off, resets and pane/overlay changes revoke pending authority, not bytes
+already written. Switching to another application does not cancel accepted
+clipboard reads or configured writes. A paste gesture must start in the focused
+active pane. It captures the exact native offer; replacing or clearing the native
+selection revokes it. A valid one-use gesture token can finish its read after
+window focus loss. Fresh ambient reads require focus and configured read
+permission. Writes require configured write permission and an active pane, not
+OS window focus. Mode-off cancels admitted work but does not deny fresh writes
+allowed by configuration.
 An already-started OSC frame finishes before subsequent output when the PTY makes
 progress. A slow consumer may stall it indefinitely; there is no live stall
 timeout that silently kills normal input. Actual pane close interrupts native I/O.

@@ -281,6 +281,11 @@ pub trait Pane: Downcast + Send + Sync {
     /// Called to advise on whether this pane has focus
     fn focus_changed(&self, _focused: bool) {}
 
+    /// Reports OS window focus separately from an active-pane handoff.
+    fn window_focus_changed(&self, focused: bool) {
+        self.focus_changed(focused);
+    }
+
     /// Called to advise remote mux that this is the active pane
     /// for the current identity
     fn advise_focus(&self) {}

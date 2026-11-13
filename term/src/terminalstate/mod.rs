@@ -863,13 +863,18 @@ impl TerminalState {
         self.bracketed_paste
     }
 
-    /// Advise the terminal about a change in its focus state
+    /// Changes pane focus, revoking clipboard work on an actual pane handoff.
     pub fn focus_changed(&mut self, focused: bool) {
         if !focused {
             if let Some(clipboard) = &self.mime_clipboard {
                 clipboard.invalidate();
             }
         }
+        self.window_focus_changed(focused);
+    }
+
+    /// Reports window focus without revoking accepted clipboard operations.
+    pub fn window_focus_changed(&mut self, focused: bool) {
         if focused == self.focused {
             return;
         }
