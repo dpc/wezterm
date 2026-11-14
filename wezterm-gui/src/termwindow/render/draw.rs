@@ -88,7 +88,7 @@ impl crate::TermWindow {
         .to_arrays_transposed();
 
         for layer in render_state.layers.borrow().iter() {
-            for idx in 0..3 {
+            for idx in crate::quad::SUBLAYER_DRAW_ORDER {
                 let vb = &layer.vb.borrow()[idx];
                 let (vertex_count, index_count) = vb.vertex_index_count();
                 let vertex_buffer;
@@ -235,7 +235,7 @@ impl crate::TermWindow {
         let rapid_blink: ColorEaseUniform = (*self.rapid_blink_state.borrow()).into();
 
         for layer in gl_state.layers.borrow().iter() {
-            for idx in 0..3 {
+            for idx in crate::quad::SUBLAYER_DRAW_ORDER {
                 let vb = &layer.vb.borrow()[idx];
                 let (vertex_count, index_count) = vb.vertex_index_count();
                 if vertex_count > 0 {

@@ -25,6 +25,7 @@ use wezterm_escape_parser::csi::{
 use wezterm_escape_parser::{OneBased, OperatingSystemCommand, CSI};
 use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo};
 
+mod cell_border;
 #[cfg(test)]
 mod clipboard_tests;
 mod image;
@@ -1778,7 +1779,10 @@ impl TerminalState {
                 self.top_and_bottom_margins = 0..self.screen().physical_rows as i64;
                 self.left_and_right_margins = 0..self.screen().physical_cols;
                 self.set_cursor_pos(&Position::Absolute(0), &Position::Absolute(0));
+                let borders = self.pen.borders().cloned();
+                self.pen.set_borders(None);
                 self.erase_in_display(EraseInDisplay::EraseDisplay);
+                self.pen.set_borders(borders);
             }
             Mode::QueryDecPrivateMode(DecPrivateMode::Code(
                 DecPrivateModeCode::Select132Columns,
@@ -2073,7 +2077,9 @@ impl TerminalState {
                     self.dec_save_cursor();
                     self.screen.activate_alt_screen(self.seqno);
                     self.set_cursor_pos(&Position::Absolute(0), &Position::Absolute(0));
+                    let borders = self.pen.borders().cloned();
                     self.pen = CellAttributes::default();
+                    self.pen.set_borders(borders);
                     self.erase_in_display(EraseInDisplay::EraseDisplay);
                 }
             }
@@ -2410,9 +2416,10 @@ impl TerminalState {
                     && self.left_and_right_margins.contains(&x)
                 {
                     let margin = self.left_and_right_margins.end;
+                    let blank_attr = self.pen.clone_sgr_only();
                     let screen = self.screen_mut();
                     for _ in 0..n as usize {
-                        screen.insert_cell(x, y, margin, seqno);
+                        screen.insert_cell(x, y, margin, seqno, blank_attr.clone());
                     }
                 }
             }
@@ -2578,7 +2585,9 @@ impl TerminalState {
 
             Cursor::Left(_n) => {
                 // https://vt100.net/docs/vt510-rm/CUB.html
-                unreachable!("Actually handled in Performer::csi_dispatch by rewriting as ControlCode::Backspace");
+                unreachable!(
+                    "Actually handled in Performer::csi_dispatch by rewriting as ControlCode::Backspace"
+                );
             }
 
             Cursor::Right(n) => {
@@ -2834,9 +2843,11 @@ impl TerminalState {
             Sgr::Reset => {
                 let link = self.pen.hyperlink().map(Arc::clone);
                 let semantic_type = self.pen.semantic_type();
+                let protected = self.pen.protected();
                 self.pen = CellAttributes::default();
                 self.pen.set_hyperlink(link);
                 self.pen.set_semantic_type(semantic_type);
+                self.pen.set_protected(protected);
             }
             Sgr::Intensity(intensity) => {
                 self.pen.set_intensity(intensity);

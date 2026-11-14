@@ -562,6 +562,20 @@ impl crate::TermWindow {
                             return;
                         }
                     }
+                    if let Err(err) = self.term_window.render_cell_borders(
+                        self.layers,
+                        lines,
+                        self.dims.cols,
+                        (
+                            self.left_pixel_x,
+                            self.top_pixel_y
+                                + self.pos.top as f32
+                                    * self.term_window.render_metrics.cell_size.height as f32,
+                        ),
+                        self.palette,
+                    ) {
+                        self.error.replace(err);
+                    }
                 }
             }
 

@@ -212,6 +212,30 @@ impl Line {
     /// Wrap the line so that it fits within the provided width.
     /// Returns the list of resultant line(s)
     pub fn wrap(self, width: usize, seqno: SequenceNo) -> Vec<Self> {
+        if self.has_cell_borders() {
+            let mut source = self;
+            let cells = source.cells_mut();
+            let end = cells
+                .iter()
+                .rposition(|c| c.str() != " " || c.attrs().borders().is_some())
+                .map(|i| (i + cells[i].width()).min(cells.len()))
+                .unwrap_or(0);
+            let mut lines = Vec::new();
+            let mut start = 0;
+            let mut pos = 0;
+            while pos < end {
+                let next = (pos + cells[pos].width().max(1)).min(cells.len());
+                if pos > start && next - start > width {
+                    let mut line = Self::from_cells(cells[start..pos].to_vec(), seqno);
+                    line.set_last_cell_was_wrapped(true, seqno);
+                    lines.push(line);
+                    start = pos;
+                }
+                pos = next;
+            }
+            lines.push(Self::from_cells(cells[start..pos].to_vec(), seqno));
+            return lines;
+        }
         let mut cells: Vec<CellRef> = self.visible_cells().collect();
         if let Some(end_idx) = cells.iter().rposition(|c| c.str() != " ") {
             cells.truncate(end_idx + 1);
@@ -854,7 +878,19 @@ impl Line {
             }
         }
 
-        self.invalidate_grapheme_at_or_before(idx);
+        // Blanking the other half of an overwritten wide glyph is a write,
+        // so it takes the new pen rather than the old glyph's border set.
+        {
+            let cells = self.coerce_vec_storage();
+            let blank = Cell::blank_with_attrs(cell.attrs().clone_sgr_only());
+            if idx > 0 && cells[idx - 1].width() > 1 {
+                cells[idx - 1] = blank.clone();
+            }
+            let old_end = (idx + cells[idx].width()).min(cells.len());
+            for i in idx + width..old_end {
+                cells[i] = blank.clone();
+            }
+        }
 
         // For double-wide or wider chars, ensure that the cells that
         // are overlapped by this one are blanked out.
@@ -905,6 +941,11 @@ impl Line {
         self.invalidate_implicit_hyperlinks(seqno);
 
         let cells = self.coerce_vec_storage();
+        if x > 0 && x < cells.len() && cells[x - 1].width() > 1 {
+            let blank = Cell::blank_with_attrs(cell.attrs().clone_sgr_only());
+            cells[x - 1] = blank.clone();
+            cells[x] = blank;
+        }
         if right_margin <= cells.len() {
             cells.remove(right_margin - 1);
         }
@@ -961,8 +1002,20 @@ impl Line {
         blank_attr: CellAttributes,
     ) {
         self.invalidate_implicit_hyperlinks(seqno);
+        if blank_attr.borders().is_some() && self.len() < right_margin {
+            self.resize(right_margin, seqno);
+        }
         if x < self.len() {
-            self.invalidate_grapheme_at_or_before(x);
+            let cells = self.coerce_vec_storage();
+            if x > 0 && cells[x - 1].width() > 1 {
+                for i in x - 1..=x {
+                    cells[i] = Cell::blank_with_attrs(blank_attr.clone());
+                }
+            }
+            let old_end = (x + cells[x].width()).min(cells.len());
+            for i in x + 1..old_end {
+                cells[i] = Cell::blank_with_attrs(blank_attr.clone());
+            }
             self.coerce_vec_storage().remove(x);
         }
         if right_margin <= self.len() + 1
@@ -1067,6 +1120,11 @@ impl Line {
     /// re-materialize the storage in a form that is suitable
     /// for mutation.
     pub fn compress_for_scrollback(&mut self) {
+        // Clustered storage omits wide-character continuation cells. Rectangles
+        // can assign them independent borders, so preserve physical storage.
+        if self.has_cell_borders() {
+            return;
+        }
         let cv = match &self.cells {
             CellStorage::V(v) => ClusteredLine::from_cell_vec(v.len(), self.visible_cells()),
             CellStorage::C(_) => return,
@@ -1080,7 +1138,7 @@ impl Line {
 
     /// Return true if the line consists solely of whitespace cells
     pub fn is_whitespace(&self) -> bool {
-        self.visible_cells().all(|c| c.str() == " ")
+        !self.has_cell_borders() && self.visible_cells().all(|c| c.str() == " ")
     }
 
     /// Return true if the last cell in the line has the wrapped attribute,
@@ -1116,7 +1174,16 @@ impl Line {
     /// to this line.
     /// This function is used by rewrapping logic when joining wrapped
     /// lines back together.
-    pub fn append_line(&mut self, other: Line, seqno: SequenceNo) {
+    pub fn append_line(&mut self, mut other: Line, seqno: SequenceNo) {
+        if self.has_cell_borders() || other.has_cell_borders() {
+            let cells = self.coerce_vec_storage();
+            for cell in other.cells_mut() {
+                cells.push(cell.clone());
+            }
+            self.update_last_change_seqno(seqno);
+            self.invalidate_zones();
+            return;
+        }
         match &mut self.cells {
             CellStorage::V(cells) => {
                 for cell in other.visible_cells() {
@@ -1142,6 +1209,30 @@ impl Line {
     /// cell, so that important invariants are upheld.
     pub fn cells_mut_for_attr_changes_only(&mut self) -> &mut [Cell] {
         self.coerce_vec_storage().as_mut_slice()
+    }
+
+    /// Return whether any physical cell carries border attributes.
+    pub fn has_cell_borders(&self) -> bool {
+        match &self.cells {
+            CellStorage::V(cells) => cells.iter().any(|c| c.attrs().borders().is_some()),
+            CellStorage::C(_) => self.visible_cells().any(|c| c.attrs().borders().is_some()),
+        }
+    }
+
+    /// Return borders for a physical column, including a wide glyph's second cell.
+    pub fn cell_borders(
+        &self,
+        index: usize,
+    ) -> Option<alloc::sync::Arc<wezterm_cell::border::CellBorders>> {
+        match &self.cells {
+            CellStorage::V(cells) => cells.get(index)?.attrs().borders().cloned(),
+            CellStorage::C(_) => self
+                .visible_cells()
+                .find(|c| c.cell_index() <= index && index < c.cell_index() + c.width())?
+                .attrs()
+                .borders()
+                .cloned(),
+        }
     }
 
     /// Given a starting attribute value, produce a series of Change

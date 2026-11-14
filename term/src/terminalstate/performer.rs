@@ -206,7 +206,7 @@ impl<'a> Performer<'a> {
                 let margin = self.left_and_right_margins.end;
                 let screen = self.screen_mut();
                 for _ in x..x + print_width as usize {
-                    screen.insert_cell(x, y, margin, seqno);
+                    screen.insert_cell(x, y, margin, seqno, pen.clone_sgr_only());
                 }
             }
 
@@ -292,6 +292,10 @@ impl<'a> Performer<'a> {
         match &ctrl {
             DeviceControlMode::ShortDeviceControl(s) => {
                 match (s.byte, s.intermediates.as_slice()) {
+                    (b'b', &[b'+']) if s.params == [1] => {
+                        self.flush_print();
+                        self.cell_border(&s.data);
+                    }
                     (b'q', &[b'$']) => {
                         // DECRQSS - Request Status String
                         // https://vt100.net/docs/vt510-rm/DECRQSS.html
@@ -575,6 +579,9 @@ impl<'a> Performer<'a> {
                 // to receive it. Just ignore it.
             }
             CSI::Unspecified(unspec) => {
+                if self.selective_erase(&unspec) {
+                    return;
+                }
                 if self.config.log_unknown_escape_sequences() {
                     log::warn!("unknown unspecified CSI: {:?}", format!("{}", unspec));
                 }
@@ -654,17 +661,15 @@ impl<'a> Performer<'a> {
                 // its original purpose was for aligning the CRT.
                 // https://vt100.net/docs/vt510-rm/DECALN.html
 
+                let mut attrs = CellAttributes::default();
+                attrs.set_borders(self.pen.borders().cloned());
                 let screen = self.screen_mut();
                 let col_range = 0..screen.physical_cols;
                 for y in 0..screen.physical_rows as VisibleRowIndex {
                     let line_idx = screen.phys_row(y);
                     let line = screen.line_mut(line_idx);
                     line.resize(col_range.end, seqno);
-                    line.fill_range(
-                        col_range.clone(),
-                        &Cell::new('E', CellAttributes::default()),
-                        seqno,
-                    );
+                    line.fill_range(col_range.clone(), &Cell::new('E', attrs.clone()), seqno);
                 }
 
                 self.top_and_bottom_margins = 0..self.screen().physical_rows as VisibleRowIndex;
