@@ -161,7 +161,6 @@ impl MimeClipboard {
     fn active(&self, tw: &TermWindow, epoch: u64) -> bool {
         self.supported()
             && self.generation.load(Ordering::Acquire) == epoch
-            && tw.focused.is_some()
             && tw
                 .get_active_pane_or_overlay()
                 .is_some_and(|p| p.pane_id() == self.pane_id)
@@ -188,9 +187,16 @@ impl MimeClipboard {
             }
             self.reap();
             let mut session = self.session.lock().unwrap();
+            session
+                .protocol
+                .set_file_export_limit(tw.config.osc5522_file_export_limit);
             session.protocol.handle_for_epoch(
                 &fields,
-                tw.config.allow_osc5522_clipboard_read && self.active(tw, epoch),
+                // A fresh ambient read still needs focus. A valid gesture token
+                // authorizes its retained offer independently of this fallback.
+                tw.config.allow_osc5522_clipboard_read
+                    && tw.focused.is_some()
+                    && self.active(tw, epoch),
                 tw.config.allow_osc5522_clipboard_write && self.active(tw, epoch),
                 Instant::now(),
                 epoch,
@@ -306,6 +312,7 @@ impl MimeClipboard {
                 id,
                 primary,
                 file_export,
+                file_export_limit,
                 data,
                 busy,
             } => {
@@ -318,7 +325,7 @@ impl MimeClipboard {
                 reply.busy = Some(busy);
                 if file_export {
                     #[cfg(target_os = "linux")]
-                    self.export_file(data, reply, epoch);
+                    self.export_file(data, reply, epoch, file_export_limit);
                     #[cfg(not(target_os = "linux"))]
                     {
                         reply.error = Some("ENOSYS");
@@ -372,11 +379,13 @@ impl MimeClipboard {
         data: window::clipboard::ClipboardData,
         mut reply: ClipboardResponse,
         epoch: u64,
+        file_export_limit: usize,
     ) {
         let this = self.clone();
         let generation = self.generation.clone();
         let preparation = window::clipboard_export::prepare(
             data,
+            file_export_limit,
             Arc::new(move || generation.load(Ordering::Acquire) == epoch),
         );
         promise::spawn::spawn(async move {
@@ -385,6 +394,8 @@ impl MimeClipboard {
                 Err(err) => {
                     reply.error = Some(if err.is::<window::clipboard_export::InvalidExport>() {
                         "EINVAL"
+                    } else if err.is::<window::clipboard_export::ExportTooLarge>() {
+                        "EFBIG"
                     } else {
                         match err.downcast_ref::<ClipboardError>() {
                             Some(ClipboardError::Temporary) => "EBUSY",
@@ -399,7 +410,7 @@ impl MimeClipboard {
             let window = this.window.clone();
             window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                 let future = {
-                    // File I/O never holds this lock. Re-check focus, permission,
+                    // File I/O never holds this lock. Re-check active pane, permission,
                     // attachment and captured epoch immediately before publication.
                     let _commit = this.commit.lock().unwrap();
                     if !this.active(tw, epoch) || !tw.config.allow_osc5522_clipboard_write {
@@ -431,7 +442,9 @@ impl MimeClipboard {
     fn paste(self: &Arc<Self>, tw: &TermWindow, clipboard: Clipboard) {
         self.reap();
         let epoch = self.generation.load(Ordering::Acquire);
-        if !self.active(tw, epoch) {
+        // A new gesture requires focused input routing. Once accepted, its exact
+        // native offer and lifecycle epoch, not window focus, bound the work.
+        if tw.focused.is_none() || !self.active(tw, epoch) {
             return;
         }
         if self.session.lock().unwrap().protocol.is_busy()

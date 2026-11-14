@@ -67,8 +67,14 @@ Location, aliases, duplicate keys and unknown metadata are rejected.
 
 Only one `application/vnd.tau.file-export-v1` body is accepted. Its TAUFILES
 envelope has exactly one file, a UTF-8 basename of at most 255 bytes, an optional
-ASCII MIME hint of at most 255 bytes, and an opaque body of at most 16MiB.
-The maximum envelope is 16MiB + 535 bytes, unlike the ingress aggregate cap.
+ASCII MIME hint of at most 255 bytes, and an opaque body capped by
+`osc5522_file_export_limit` (16MiB by default). The maximum envelope size is the
+body limit plus 535 bytes, unlike the ingress aggregate cap. The opener snapshots
+the limit for accumulation and staging; reloads affect only later transactions.
+Zero allows only empty bodies. Configuration rejects caps whose envelope exceeds
+the platform's allocation size. Parsing checks u64/usize conversion and header/body
+addition before indexing. Excessive body/envelope sizes return EFBIG, distinct from
+malformed envelopes (EINVAL).
 Empty/dot/dotdot names, separators and control characters are rejected.
 No supplied URI, source path, filename extension, or MIME hint grants local
 filesystem authority. The hint does not select a handler or execute anything.
@@ -77,8 +83,15 @@ Four shared acquisition workers bound asynchronous staging. Files are created
 exclusively as 0600 in private 0700 directories below a validated, same-user,
 non-symlink `XDG_RUNTIME_DIR/wezterm-file-export-v1`. Missing/unsafe runtime
 directories fail closed. A nonblocking filesystem lock bounds all cooperating
-processes to 32 export directories (at most 512MiB of bodies), including pending
+processes to 32 export directories, including pending
 and crashed exports. Saturation returns EBUSY instead of evicting existing files.
+With every export using the default cap, the directories retain at most 512MiB of
+bodies; 128MiB caps allow 4GiB. Each export retains its admitted cap across configuration
+changes, and cooperating processes can use different caps. Lowering the cap does
+not evict old exports. Per-attachment assembly and up to four staging workers
+retain envelope buffers; growing vectors may reserve extra capacity and temporarily
+hold both old and new allocations during growth. Raising the cap increases these memory
+costs independently of the read-response budget.
 Failures before publication remove partial directories and release their slots.
 Pending GUI publications retain a per-directory lease against the reaper and
 must pass a monotonic expiry check before publication; a delayed callback cannot
@@ -86,8 +99,8 @@ publish an already-reaped path.
 Filesystem calls are not forcibly interruptible; the ten-second worker deadline
 and generation checks run between operations, never under the publication lock.
 
-The GUI rechecks the captured generation, focus, attachment and write permission
-under the existing commit lock before publishing locally generated URI-list,
+Under the existing commit lock, the GUI rechecks the captured generation, pane
+activity, attachment and write permission before publishing locally generated URI-list,
 GNOME copied-file and KDE copy metadata. DONE means staging and synchronous native
 publication succeeded, **not** that a destination pasted the file or that the
 compositor confirmed ownership. Lost replies/cancellation after publication leave
@@ -101,13 +114,22 @@ exit/crash remain counted and are cleaned on a later sweep/export or runtime
 directory removal at logout; without a running process cleanup is not promised
 at the one-hour instant. There is no indefinite clipboard-manager paste guarantee.
 
-Focus/pane/overlay changes, mode-off, resets, replacement, destruction and
+Pane/overlay changes, mode-off, resets, replacement, destruction and
 disconnect revoke authority. Soft reset preserves the mode but revokes its work.
 Capture the request/gesture epoch before queuing GUI work: stale work must never
 adopt a new epoch. Native commit and revocation share a lock; release it and the
 session lock before taking the terminal/output lock. Do not promise observation
 of remote shell foreground-process changes; applications must disable before
 handoff.
+
+OS window focus changes do not revoke accepted clipboard work. A paste gesture must start in the focused active pane. It captures the exact
+native offer synchronously, rather than looking up the current selection later. Its one-use,
+time-limited grant and pending reads can finish across focus loss; native selection
+replacement or clearing still revokes that offer. Fresh ambient reads require
+configured read permission and a focused pane. Configured writes may start or
+finish while the window is unfocused, but not from an inactive pane. Hard lifecycle
+revocation cancels admitted work. Mode-off does not deny fresh writes allowed by
+configuration.
 
 ## Bounds and errors
 

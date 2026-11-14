@@ -13,7 +13,7 @@ and does not enable clipboard writes automatically.
 
 **Paste within one hour.** Local staging paths expire one hour after creation,
 including when WezTerm still owns the clipboard. Clipboard managers do not extend
-this lifetime. Up to 32 files (each at most 16MiB) can be staged across cooperating
+this lifetime. Up to 32 files (each at most 16MiB by default) can be staged across cooperating
 WezTerm processes; a full staging cache fails with EBUSY rather than deleting
 earlier files. Files are private to your user, under `XDG_RUNTIME_DIR`, not saved
 permanently. Cleanup runs every minute after an export and before new exports.
@@ -49,8 +49,10 @@ u16BE MIME-hint length, u64BE body length, then basename, hint and body with exa
 EOF. The UTF-8 basename is 1–255 bytes, excludes dot/dotdot, separators and control
 characters. The optional hint is at most 255 ASCII bytes of `type/subtype`, without
 parameters. It neither selects a handler nor changes file permissions.
-The original body may be a full 16MiB; envelope overhead is additional, at most
-535 bytes. No source path or remote URI is accepted.
+The original body may use the full `osc5522_file_export_limit` (16MiB by default);
+envelope overhead is additional, at most 535 bytes. No source path or remote URI is
+accepted. A body exceeding the captured limit, or an accumulated envelope exceeding
+that limit plus 535 bytes, fails with EFBIG. Malformed envelopes fail with EINVAL.
 
 ### Isolated verification
 
@@ -84,6 +86,8 @@ panes.
 config.allow_osc5522_clipboard_read = false
 config.allow_osc5522_clipboard_write = false
 config.osc5522_clipboard_read_limit = 64 * 1024 * 1024
+-- Outbound copied-file body cap in bytes; metadata is additional.
+config.osc5522_file_export_limit = 16 * 1024 * 1024
 -- Opt in to regular-file bodies on ordinary native paste gestures only.
 config.enable_osc5522_file_paste = false
 ```
@@ -96,8 +100,27 @@ either permission trusts foreground applications in the attached pane to perform
 that operation without a prompt. Do not enable these globally for untrusted
 applications.
 
+For larger outbound files, set `config.osc5522_file_export_limit = 128 * 1024 * 1024`
+for 128MiB. This option does not grant write permission or change raw MIME writes,
+inbound copied-file acquisition, or the client's independent export cap. Zero permits
+only empty file bodies. The terminal snapshots the limit when it handles the
+`write-file` opener and uses that same value through staging, so configuration
+reloads affect only subsequent transactions. The body limit plus the maximum
+535-byte envelope overhead must fit the platform's allocation size.
+
+Raising the limit increases memory and runtime-directory storage consumption.
+Each attachment can assemble one envelope. Its growing buffer can reserve more
+than its byte length, and reallocation can temporarily retain old and new buffers.
+Up to four shared workers can retain exports during staging; queued publications
+also retain staging slots. The 32-directory cache can retain up to 512MiB of file
+bodies at the default cap, or 4GiB when all exports use 128MiB. Processes using
+different limits, existing exports, and in-flight transactions retain their own
+captured caps; lowering the setting does not shrink or evict them. The limits remain
+four workers and 32 directories, with a ten-second staging deadline and one-hour
+lifetime.
+
 The read limit is an aggregate decoded-byte resource policy. Reads exceeding it
-are denied before a success response begins. Writes have a separate 64MiB limit
+are denied before a success response begins. Raw writes have a separate 64MiB limit
 and support multiple formats and aliases; they replace the native selection only
 after the entire write validates. There is no write success backend exemption:
 writes work when explicitly allowed, and are denied by default.
@@ -166,7 +189,15 @@ interval can return EBUSY. Consumers must discard incomplete or stale-ID data.
 
 ## Operational limitations
 
-Mode-off/reset/focus changes revoke pending authority, not bytes already written.
+Mode-off, resets and pane/overlay changes revoke pending authority, not bytes
+already written. Switching to another application does not cancel accepted
+clipboard reads or configured writes. A paste gesture must start in the focused
+active pane. It captures the exact native offer; replacing or clearing the native
+selection revokes it. A valid one-use gesture token can finish its read after
+window focus loss. Fresh ambient reads require focus and configured read
+permission. Writes require configured write permission and an active pane, not
+OS window focus. Mode-off cancels admitted work but does not deny fresh writes
+allowed by configuration.
 An already-started OSC frame finishes before subsequent output when the PTY makes
 progress. A slow consumer may stall it indefinitely; there is no live stall
 timeout that silently kills normal input. Actual pane close interrupts native I/O.

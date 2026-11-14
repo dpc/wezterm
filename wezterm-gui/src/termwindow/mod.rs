@@ -531,9 +531,6 @@ impl TermWindow {
     }
 
     fn focus_changed(&mut self, focused: bool, window: &Window) {
-        if !focused {
-            self.revoke_mime_clipboards();
-        }
         log::trace!("Setting focus to {:?}", focused);
         self.focused = if focused { Some(Instant::now()) } else { None };
         self.quad_generation += 1;
@@ -557,7 +554,7 @@ impl TermWindow {
         window.invalidate();
 
         if let Some(pane) = self.get_active_pane_or_overlay() {
-            pane.focus_changed(focused);
+            pane.window_focus_changed(focused);
         }
 
         self.update_title();

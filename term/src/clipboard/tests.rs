@@ -1,6 +1,113 @@
 use super::*;
 
 #[test]
+fn raised_file_limit_accepts_bodies_above_default() {
+    let mut s = session();
+    s.set_file_export_limit(128 * 1024 * 1024);
+    handle(&mut s, "type=write-file:id=large", None);
+    let mime = STANDARD.encode("application/vnd.tau.file-export-v1");
+    // A multiple of three avoids padding between base64 fragments.
+    let chunk = STANDARD.encode(vec![0xa5; 3 * 4096]);
+    let mut size = 0;
+    while size <= DEFAULT_FILE_EXPORT_LIMIT {
+        assert!(handle(
+            &mut s,
+            &format!("type=write-file-data:id=large:mime={mime}"),
+            Some(&chunk),
+        )
+        .is_none());
+        size += 3 * 4096;
+    }
+    match handle(&mut s, "type=write-file-data:id=large", None) {
+        Some(ClipboardAction::Write { data, .. }) => {
+            assert_eq!(data["application/vnd.tau.file-export-v1"].len(), size);
+        }
+        _ => panic!("missing file operation"),
+    }
+}
+
+#[test]
+fn file_export_limit_snapshot_boundaries_and_failure_drain() {
+    let mime = STANDARD.encode("application/vnd.tau.file-export-v1");
+    let packet = format!("type=write-file-data:id=file:mime={mime}");
+    let mut s = session();
+    s.set_file_export_limit(17);
+    handle(&mut s, "type=write-file:id=file", None);
+    s.set_file_export_limit(0);
+    let data = vec![0xa5; 17 + FILE_EXPORT_OVERHEAD];
+    // Fragmentation must not change the exact decoded-byte boundary.
+    let encoded = STANDARD.encode(&data);
+    for part in encoded.as_bytes().chunks(7) {
+        assert!(handle(&mut s, &packet, Some(std::str::from_utf8(part).unwrap())).is_none());
+    }
+    match handle(&mut s, "type=write-file-data:id=file", None) {
+        Some(ClipboardAction::Write {
+            file_export_limit,
+            data: result,
+            busy,
+            ..
+        }) => {
+            assert_eq!(file_export_limit, 17);
+            assert_eq!(
+                result["application/vnd.tau.file-export-v1"].as_slice(),
+                data
+            );
+            busy.store(false, Ordering::Release);
+        }
+        _ => panic!("missing file operation"),
+    }
+    // The reloaded policy applies to the next opener, not the previous one.
+    handle(&mut s, "type=write-file:id=file", None);
+    s.set_file_export_limit(128 * 1024 * 1024);
+    assert_eq!(
+        status(handle(
+            &mut s,
+            &packet,
+            Some(&STANDARD.encode(vec![0; FILE_EXPORT_OVERHEAD + 1]))
+        )),
+        "EFBIG"
+    );
+    assert!(handle(&mut s, "type=write-file-data:id=file", None).is_none());
+    handle(&mut s, "type=write-file:id=file", None);
+    assert!(handle(&mut s, &packet, Some(&STANDARD.encode(&data))).is_none());
+    match handle(&mut s, "type=write-file-data:id=file", None) {
+        Some(ClipboardAction::Write {
+            file_export_limit,
+            busy,
+            ..
+        }) => {
+            assert_eq!(file_export_limit, 128 * 1024 * 1024);
+            busy.store(false, Ordering::Release);
+        }
+        _ => panic!("missing file operation"),
+    }
+
+    // A zero file cap does not constrain opaque raw writes.
+    s.set_file_export_limit(0);
+    handle(&mut s, "type=write:id=raw", None);
+    assert!(handle(
+        &mut s,
+        &format!("type=wdata:id=raw:mime={mime}"),
+        Some(&encoded)
+    )
+    .is_none());
+    match handle(&mut s, "type=wdata:id=raw", None) {
+        Some(ClipboardAction::Write {
+            file_export: false,
+            busy,
+            ..
+        }) => {
+            busy.store(false, Ordering::Release);
+        }
+        _ => panic!("missing raw operation"),
+    }
+
+    s.set_file_export_limit(usize::MAX);
+    handle(&mut s, "type=write-file:id=file", None);
+    assert_eq!(status(handle(&mut s, &packet, Some("AAAA"))), "EFBIG");
+}
+
+#[test]
 fn file_export_has_dedicated_family_and_raw_mime_stays_opaque() {
     let mut s = session();
     let mime = STANDARD.encode("application/vnd.tau.file-export-v1");

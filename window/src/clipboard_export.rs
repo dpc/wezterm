@@ -2,7 +2,7 @@
 use crate::clipboard::{ClipboardData, ClipboardError, ReaderPermit};
 use anyhow::{ensure, Context};
 use promise::{Future, Promise};
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -14,8 +14,6 @@ use tempfile::TempDir;
 
 /// Reserved payload format, interpreted only for an explicit `write-file`.
 pub const FILE_EXPORT_MIME: &str = "application/vnd.tau.file-export-v1";
-/// File body limit; the bounded envelope is additional.
-pub const FILE_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const LIFETIME: Duration = Duration::from_secs(3600);
 const MAX_EXPORTS: usize = 32;
 static JANITOR: Once = Once::new();
@@ -24,6 +22,11 @@ static JANITOR: Once = Once::new();
 #[derive(Debug, thiserror::Error)]
 #[error("invalid file export")]
 pub struct InvalidExport;
+
+/// A declared file body exceeds the transaction's captured size policy.
+#[derive(Debug, thiserror::Error)]
+#[error("file export body exceeds configured limit")]
+pub struct ExportTooLarge;
 
 /// An unpublished staging directory; dropping it rolls back all local effects.
 pub struct PreparedExport {
@@ -54,6 +57,7 @@ impl PreparedExport {
 /// Validates and stages on one of the four shared native acquisition workers.
 pub fn prepare(
     data: ClipboardData,
+    body_limit: usize,
     valid: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Future<PreparedExport> {
     let permit = match ReaderPermit::acquire() {
@@ -80,7 +84,13 @@ pub fn prepare(
                 return Err(InvalidExport.into());
             }
             let bytes = data.get(FILE_EXPORT_MIME).ok_or(InvalidExport)?;
-            let (name, body) = parse(bytes).map_err(|_| InvalidExport)?;
+            let (name, body) = parse(bytes, body_limit).map_err(|err| {
+                if err.is::<ExportTooLarge>() {
+                    err
+                } else {
+                    InvalidExport.into()
+                }
+            })?;
             let root = runtime_root()?;
             let prepared = stage(&root, name, body, &check)?;
             JANITOR.call_once(|| {
@@ -100,7 +110,7 @@ pub fn prepare(
     future
 }
 
-fn parse(bytes: &[u8]) -> anyhow::Result<(&str, &[u8])> {
+fn parse(bytes: &[u8], body_limit: usize) -> anyhow::Result<(&str, &[u8])> {
     ensure!(bytes.len() >= 25, "short file export");
     ensure!(&bytes[..9] == b"TAUFILES\0", "invalid file export version");
     ensure!(bytes[9..13] == 1u32.to_be_bytes(), "expected one file");
@@ -111,12 +121,18 @@ fn parse(bytes: &[u8]) -> anyhow::Result<(&str, &[u8])> {
         name_len <= 255 && mime_len <= 255,
         "file metadata too large"
     );
-    ensure!(body_len <= FILE_BODY_LIMIT as u64, "file body too large");
-    let header = 25 + name_len + mime_len;
-    ensure!(
-        bytes.len() == header + body_len as usize,
-        "invalid file length"
-    );
+    if body_len > u64::try_from(body_limit)? {
+        return Err(ExportTooLarge.into());
+    }
+    let body_len = usize::try_from(body_len).context("unrepresentable file body length")?;
+    let header = 25usize
+        .checked_add(name_len)
+        .and_then(|len| len.checked_add(mime_len))
+        .context("file header length overflow")?;
+    let total = header
+        .checked_add(body_len)
+        .context("file envelope length overflow")?;
+    ensure!(bytes.len() == total, "invalid file length");
     let name = std::str::from_utf8(&bytes[25..25 + name_len])?;
     ensure!(
         !name.is_empty()
