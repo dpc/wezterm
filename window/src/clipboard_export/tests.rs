@@ -1,5 +1,11 @@
 use super::*;
 
+const FILE_BODY_LIMIT: usize = 16 * 1024 * 1024;
+
+fn parse(bytes: &[u8]) -> anyhow::Result<(&str, &[u8])> {
+    super::parse(bytes, FILE_BODY_LIMIT)
+}
+
 fn bundle(name: &str, mime: &str, body: &[u8]) -> Vec<u8> {
     let mut bytes = b"TAUFILES\0".to_vec();
     bytes.extend(1u32.to_be_bytes());
@@ -52,6 +58,44 @@ fn exact_framing_safe_names_and_full_size_body() {
     let mut count = bundle("x", "", b"");
     count[12] = 2;
     assert!(parse(&count).is_err());
+}
+
+#[test]
+fn configured_body_limits_and_hostile_lengths() {
+    // The body cap excludes both short and maximum-size metadata.
+    for (name, mime) in [
+        ("x".to_string(), String::new()),
+        (
+            "n".repeat(255),
+            format!("{}/{}", "a".repeat(127), "b".repeat(127)),
+        ),
+    ] {
+        let bytes = bundle(&name, &mime, &[0xa5; 17]);
+        assert_eq!(super::parse(&bytes, 17).unwrap().1, &[0xa5; 17]);
+        assert!(super::parse(&bytes, 16).unwrap_err().is::<ExportTooLarge>());
+    }
+    assert!(super::parse(&bundle("empty", "", b""), 0).is_ok());
+    assert!(super::parse(&bundle("x", "", b"x"), 0)
+        .unwrap_err()
+        .is::<ExportTooLarge>());
+
+    let bytes = bundle("large", "", &vec![0xa5; FILE_BODY_LIMIT + 1]);
+    assert!(parse(&bytes).unwrap_err().is::<ExportTooLarge>());
+    assert_eq!(
+        super::parse(&bytes, 128 * 1024 * 1024).unwrap().1.len(),
+        FILE_BODY_LIMIT + 1
+    );
+
+    let mut hostile = bundle("x", "", b"");
+    hostile[17..25].copy_from_slice(&u64::MAX.to_be_bytes());
+    assert!(super::parse(&hostile, 128 * 1024 * 1024)
+        .unwrap_err()
+        .is::<ExportTooLarge>());
+    // Even a caller bypassing config validation cannot wrap the total length.
+    assert!(super::parse(&hostile, usize::MAX).is_err());
+    hostile[17..25].copy_from_slice(&1u64.to_be_bytes());
+    let err = super::parse(&hostile, 1).unwrap_err();
+    assert!(!err.is::<ExportTooLarge>());
 }
 
 #[test]

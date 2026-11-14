@@ -1,7 +1,24 @@
 use crate::background::{BackgroundLayer, Gradient};
 
+#[cfg(test)]
+mod tests;
+
 fn default_osc5522_read_limit() -> usize {
     64 * 1024 * 1024
+}
+
+fn default_osc5522_file_export_limit() -> usize {
+    wezterm_term::clipboard::DEFAULT_FILE_EXPORT_LIMIT
+}
+
+fn validate_osc5522_file_export_limit(value: &usize) -> Result<(), String> {
+    if value
+        .checked_add(wezterm_term::clipboard::FILE_EXPORT_OVERHEAD)
+        .is_none_or(|size| size > isize::MAX as usize)
+    {
+        return Err("osc5522_file_export_limit plus envelope must fit in an allocation".into());
+    }
+    Ok(())
 }
 use crate::bell::{AudibleBell, EasingFunction, VisualBell};
 use crate::color::{
@@ -106,6 +123,13 @@ pub struct Config {
     /// Aggregate decoded read resource policy, independent of protocol writes.
     #[dynamic(default = "default_osc5522_read_limit")]
     pub osc5522_clipboard_read_limit: usize,
+
+    /// Maximum outbound copied-file body in bytes, excluding envelope metadata.
+    #[dynamic(
+        default = "default_osc5522_file_export_limit",
+        validate = "validate_osc5522_file_export_limit"
+    )]
+    pub osc5522_file_export_limit: usize,
 
     #[dynamic(default)]
     pub integrated_title_button_alignment: IntegratedTitleButtonAlignment,

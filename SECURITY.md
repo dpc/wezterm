@@ -67,8 +67,14 @@ Location, aliases, duplicate keys and unknown metadata are rejected.
 
 Only one `application/vnd.tau.file-export-v1` body is accepted. Its TAUFILES
 envelope has exactly one file, a UTF-8 basename of at most 255 bytes, an optional
-ASCII MIME hint of at most 255 bytes, and an opaque body of at most 16MiB.
-The maximum envelope is 16MiB + 535 bytes, unlike the ingress aggregate cap.
+ASCII MIME hint of at most 255 bytes, and an opaque body capped by
+`osc5522_file_export_limit` (16MiB by default). The maximum envelope size is the
+body limit plus 535 bytes, unlike the ingress aggregate cap. The opener snapshots
+the limit for accumulation and staging; reloads affect only later transactions.
+Zero allows only empty bodies. Configuration rejects caps whose envelope exceeds
+the platform's allocation size. Parsing checks u64/usize conversion and header/body
+addition before indexing. Excessive body/envelope sizes return EFBIG, distinct from
+malformed envelopes (EINVAL).
 Empty/dot/dotdot names, separators and control characters are rejected.
 No supplied URI, source path, filename extension, or MIME hint grants local
 filesystem authority. The hint does not select a handler or execute anything.
@@ -77,8 +83,15 @@ Four shared acquisition workers bound asynchronous staging. Files are created
 exclusively as 0600 in private 0700 directories below a validated, same-user,
 non-symlink `XDG_RUNTIME_DIR/wezterm-file-export-v1`. Missing/unsafe runtime
 directories fail closed. A nonblocking filesystem lock bounds all cooperating
-processes to 32 export directories (at most 512MiB of bodies), including pending
+processes to 32 export directories, including pending
 and crashed exports. Saturation returns EBUSY instead of evicting existing files.
+With every export using the default cap, the directories retain at most 512MiB of
+bodies; 128MiB caps allow 4GiB. Each export retains its admitted cap across configuration
+changes, and cooperating processes can use different caps. Lowering the cap does
+not evict old exports. Per-attachment assembly and up to four staging workers
+retain envelope buffers; growing vectors may reserve extra capacity and temporarily
+hold both old and new allocations during growth. Raising the cap increases these memory
+costs independently of the read-response budget.
 Failures before publication remove partial directories and release their slots.
 Pending GUI publications retain a per-directory lease against the reaper and
 must pass a monotonic expiry check before publication; a delayed callback cannot

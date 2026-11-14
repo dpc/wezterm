@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 
 /// Maximum accepted decoded write size (independent of a client's artifact limit).
 pub const WRITE_LIMIT: usize = 64 * 1024 * 1024;
+/// Default outbound file-body cap, excluding the private envelope.
+pub const DEFAULT_FILE_EXPORT_LIMIT: usize = 16 * 1024 * 1024;
+/// Fixed header plus maximum basename and MIME hint lengths.
+pub const FILE_EXPORT_OVERHEAD: usize = 25 + 255 + 255;
 /// Maximum metadata/list size; native offers beyond this cannot be represented.
 pub const METADATA_LIMIT: usize = 64 * 1024;
 /// Lifetime of gesture authority and idle write assembly.
@@ -151,6 +155,8 @@ pub enum ClipboardAction {
         primary: bool,
         /// Explicit private file operation; ordinary MIME writes stay opaque.
         file_export: bool,
+        /// Body policy captured when the file transaction opened.
+        file_export_limit: usize,
         data: ClipboardData,
         busy: Arc<AtomicBool>,
     },
@@ -178,6 +184,8 @@ struct PendingWrite {
     primary: bool,
     /// Separates private file packets from ordinary MIME transactions.
     file_export: bool,
+    /// Body policy captured at admission, unaffected by configuration reloads.
+    file_export_limit: usize,
     /// Completed formats.
     data: ClipboardData,
     /// Current format, if any.
@@ -230,7 +238,9 @@ impl PendingWrite {
                 self.padded = self.tail.contains(&b'=');
                 self.size = self.size.checked_add(decoded.len()).ok_or("EFBIG")?;
                 let limit = if self.file_export {
-                    16 * 1024 * 1024 + 535
+                    self.file_export_limit
+                        .checked_add(FILE_EXPORT_OVERHEAD)
+                        .ok_or("EFBIG")?
                 } else {
                     WRITE_LIMIT
                 };
@@ -257,6 +267,8 @@ pub struct ClipboardSession {
     busy: Option<Arc<AtomicBool>>,
     /// Incomplete atomic write.
     write: Option<PendingWrite>,
+    /// Body policy for newly opened file transactions.
+    file_export_limit: usize,
 }
 
 impl ClipboardSession {
@@ -269,7 +281,13 @@ impl ClipboardSession {
             grant: None,
             busy: None,
             write: None,
+            file_export_limit: DEFAULT_FILE_EXPORT_LIMIT,
         }
+    }
+
+    /// Sets the outbound body policy for new transactions, preserving pending writes.
+    pub fn set_file_export_limit(&mut self, limit: usize) {
+        self.file_export_limit = limit;
     }
 
     /// Drops stale grants and partial writes without affecting newer operations.
@@ -590,6 +608,7 @@ impl ClipboardSession {
                 id,
                 primary,
                 file_export,
+                file_export_limit: self.file_export_limit,
                 data: BTreeMap::new(),
                 mime: None,
                 bytes: Vec::new(),
@@ -673,6 +692,7 @@ impl ClipboardSession {
                     id: write.id,
                     primary: write.primary,
                     file_export: write.file_export,
+                    file_export_limit: write.file_export_limit,
                     data: write.data,
                     busy,
                 })

@@ -187,6 +187,9 @@ impl MimeClipboard {
             }
             self.reap();
             let mut session = self.session.lock().unwrap();
+            session
+                .protocol
+                .set_file_export_limit(tw.config.osc5522_file_export_limit);
             session.protocol.handle_for_epoch(
                 &fields,
                 // A fresh ambient read still needs focus. A valid gesture token
@@ -309,6 +312,7 @@ impl MimeClipboard {
                 id,
                 primary,
                 file_export,
+                file_export_limit,
                 data,
                 busy,
             } => {
@@ -321,7 +325,7 @@ impl MimeClipboard {
                 reply.busy = Some(busy);
                 if file_export {
                     #[cfg(target_os = "linux")]
-                    self.export_file(data, reply, epoch);
+                    self.export_file(data, reply, epoch, file_export_limit);
                     #[cfg(not(target_os = "linux"))]
                     {
                         reply.error = Some("ENOSYS");
@@ -375,11 +379,13 @@ impl MimeClipboard {
         data: window::clipboard::ClipboardData,
         mut reply: ClipboardResponse,
         epoch: u64,
+        file_export_limit: usize,
     ) {
         let this = self.clone();
         let generation = self.generation.clone();
         let preparation = window::clipboard_export::prepare(
             data,
+            file_export_limit,
             Arc::new(move || generation.load(Ordering::Acquire) == epoch),
         );
         promise::spawn::spawn(async move {
@@ -388,6 +394,8 @@ impl MimeClipboard {
                 Err(err) => {
                     reply.error = Some(if err.is::<window::clipboard_export::InvalidExport>() {
                         "EINVAL"
+                    } else if err.is::<window::clipboard_export::ExportTooLarge>() {
+                        "EFBIG"
                     } else {
                         match err.downcast_ref::<ClipboardError>() {
                             Some(ClipboardError::Temporary) => "EBUSY",
