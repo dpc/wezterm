@@ -371,13 +371,14 @@ impl Screen {
         y: VisibleRowIndex,
         right_margin: usize,
         seqno: SequenceNo,
+        blank_attr: CellAttributes,
     ) {
         let phys_cols = self.physical_cols;
 
         let line_idx = self.phys_row(y);
         let line = self.line_mut(line_idx);
         line.update_last_change_seqno(seqno);
-        line.insert_cell(x, Cell::default(), right_margin, seqno);
+        line.insert_cell(x, Cell::blank_with_attrs(blank_attr), right_margin, seqno);
         if line.len() > phys_cols {
             // Don't allow the line width to grow beyond
             // the physical width
@@ -419,7 +420,46 @@ impl Screen {
     ) {
         let line_idx = self.phys_row(y);
         let line = self.line_mut(line_idx);
+        let borders = attr.borders().cloned();
+        if borders.is_some() || line.has_cell_borders() {
+            // A write to either half of an old wide character blanks the other
+            // half with the current pen, rather than inheriting the old border.
+            let cells = line.cells_mut();
+            let left = x > 0 && cells.get(x - 1).map(|c| c.width() > 1).unwrap_or(false);
+            let right = cells
+                .get(x + width - 1)
+                .map(|c| c.width() > 1)
+                .unwrap_or(false);
+            if left {
+                line.set_cell(x - 1, Cell::blank_with_attrs(attr.clone_sgr_only()), seqno);
+            }
+            if right {
+                line.set_cell(
+                    x + width,
+                    Cell::blank_with_attrs(attr.clone_sgr_only()),
+                    seqno,
+                );
+            }
+        }
         line.set_cell_grapheme(x, text, width, attr, seqno);
+        if width > 1 {
+            if let Some(borders) = borders {
+                let cells = line.cells_mut_for_attr_changes_only();
+                for offset in 0..width {
+                    let mut half = (*borders).clone();
+                    if offset == 0 {
+                        half.set(12, None);
+                        half.joints &= !6;
+                    } else {
+                        half.set(192, None);
+                        half.joints &= !9;
+                    }
+                    cells[x + offset]
+                        .attrs_mut()
+                        .set_borders(Some(std::sync::Arc::new(half)));
+                }
+            }
+        }
     }
 
     pub fn cell_mut(&mut self, x: usize, y: VisibleRowIndex) -> Option<&mut Cell> {
@@ -616,6 +656,9 @@ impl Screen {
         // and blank out rows at the bottom
         for n in phys_scroll.start + rows_to_copy..phys_scroll.end {
             let dest_row = self.line_mut(n);
+            if blank_attr.borders().is_some() && dest_row.len() < left_and_right_margins.end {
+                dest_row.resize(left_and_right_margins.end, seqno);
+            }
             dest_row.update_last_change_seqno(seqno);
             for cell in dest_row
                 .cells_mut()
@@ -885,6 +928,9 @@ impl Screen {
         // and blank out rows at the top
         for n in phys_scroll.start..phys_scroll.start + num_rows {
             let dest_row = self.line_mut(n);
+            if blank_attr.borders().is_some() && dest_row.len() < left_and_right_margins.end {
+                dest_row.resize(left_and_right_margins.end, seqno);
+            }
             dest_row.update_last_change_seqno(seqno);
             for cell in dest_row
                 .cells_mut()

@@ -35,6 +35,8 @@ use wezterm_term::{CellAttributes, Line, StableRowIndex};
 use window::color::LinearRgba;
 
 pub mod borders;
+mod cell_border_geometry;
+mod cell_borders;
 pub mod corners;
 pub mod draw;
 pub mod fancy_tab_bar;

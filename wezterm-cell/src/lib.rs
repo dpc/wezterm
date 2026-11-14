@@ -20,6 +20,7 @@ use crate::alloc::string::ToString;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+pub mod border;
 pub mod color;
 #[cfg(feature = "use_image")]
 pub mod image;
@@ -87,8 +88,11 @@ impl core::fmt::Debug for CellAttributes {
 }
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Default, Clone, Eq, PartialEq)]
+#[derive(Default, Clone, Eq, PartialEq)]
 struct FatAttributes {
+    /// Shared immutable border set, absent for ordinary terminal cells.
+    #[cfg_attr(feature = "use_serde", serde(default))]
+    borders: Option<Arc<border::CellBorders>>,
     /// The hyperlink content, if any
     hyperlink: Option<Arc<Hyperlink>>,
     /// The image data, if any
@@ -101,8 +105,26 @@ struct FatAttributes {
     background: ColorAttribute,
 }
 
+impl core::fmt::Debug for FatAttributes {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut debug = fmt.debug_struct("FatAttributes");
+        debug.field("hyperlink", &self.hyperlink);
+        #[cfg(feature = "use_image")]
+        debug.field("image", &self.image);
+        debug
+            .field("underline_color", &self.underline_color)
+            .field("foreground", &self.foreground)
+            .field("background", &self.background);
+        if self.borders.is_some() {
+            debug.field("borders", &self.borders);
+        }
+        debug.finish()
+    }
+}
+
 impl FatAttributes {
     pub fn compute_shape_hash<H: Hasher>(&self, hasher: &mut H) {
+        self.borders.hash(hasher);
         if let Some(link) = &self.hyperlink {
             link.compute_shape_hash(hasher);
         }
@@ -210,6 +232,7 @@ impl CellAttributes {
     bitfield!(overline, set_overline, 12);
     bitfield!(semantic_type, set_semantic_type, SemanticType, 0b11, 13);
     bitfield!(vertical_align, set_vertical_align, VerticalAlign, 0b11, 15);
+    bitfield!(protected, set_protected, 17);
 
     pub const fn blank() -> Self {
         Self {
@@ -317,6 +340,7 @@ impl CellAttributes {
     fn allocate_fat_attributes(&mut self) {
         if self.fat.is_none() {
             self.fat.replace(Box::new(FatAttributes {
+                borders: None,
                 hyperlink: None,
                 #[cfg(feature = "use_image")]
                 image: vec![],
@@ -339,6 +363,7 @@ impl CellAttributes {
                     }
                 }
                 fat.hyperlink.is_none()
+                    && fat.borders.is_none()
                     && fat.underline_color == ColorAttribute::Default
                     && fat.foreground == ColorAttribute::Default
                     && fat.background == ColorAttribute::Default
@@ -444,6 +469,7 @@ impl CellAttributes {
         // easier time in get_semantic_zones.
         res.set_semantic_type(SemanticType::default());
         res.set_underline_color(self.underline_color());
+        res.set_borders(self.borders().cloned());
 
         // Turn off underline because it can have surprising results
         // if underline is on, then we get CRLF and then SGR reset:
@@ -459,6 +485,24 @@ impl CellAttributes {
         res.set_overline(false);
         res.set_strikethrough(false);
         res
+    }
+
+    /// Return the cell-border pen or physical cell's immutable border set.
+    pub fn borders(&self) -> Option<&Arc<border::CellBorders>> {
+        self.fat.as_ref().and_then(|fat| fat.borders.as_ref())
+    }
+
+    /// Replace cell borders, canonicalizing empty sets to absence.
+    pub fn set_borders(&mut self, borders: Option<Arc<border::CellBorders>>) -> &mut Self {
+        let borders = borders.filter(|b| !b.is_empty());
+        if borders.is_some() {
+            self.allocate_fat_attributes();
+        }
+        if let Some(fat) = self.fat.as_mut() {
+            fat.borders = borders;
+        }
+        self.deallocate_fat_attributes_if_none();
+        self
     }
 
     pub fn hyperlink(&self) -> Option<&Arc<Hyperlink>> {

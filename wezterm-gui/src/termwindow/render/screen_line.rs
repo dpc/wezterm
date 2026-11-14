@@ -13,7 +13,6 @@ use std::rc::Rc;
 use std::time::Instant;
 use termwiz::cell::{unicode_column_width, Blink};
 use termwiz::color::LinearRgba;
-use termwiz::surface::CursorShape;
 use wezterm_bidi::Direction;
 use wezterm_term::color::ColorAttribute;
 use wezterm_term::CellAttributes;
@@ -262,7 +261,7 @@ impl crate::TermWindow {
                 // Draw one per cell, otherwise curly underlines
                 // stretch across the whole span
                 for i in 0..cluster_width {
-                    let mut quad = layers.allocate(0).context("layers.allocate(0)")?;
+                    let mut quad = layers.allocate(1).context("layers.allocate(1)")?;
                     let x = gl_x
                         + params.left_pixel_x
                         + if params.use_pixel_positioning {
@@ -349,10 +348,7 @@ impl crate::TermWindow {
                 + (phys(params.cursor.x, num_cols, direction) as f32 * cell_width);
 
             if let Some(shape) = cursor_shape {
-                let cursor_layer = match shape {
-                    CursorShape::BlinkingBar | CursorShape::SteadyBar => 2,
-                    _ => 0,
-                };
+                let cursor_layer = super::cell_borders::cursor_layer(shape, params.password_input);
                 let mut quad = layers
                     .allocate(cursor_layer)
                     .with_context(|| format!("layers.allocate({cursor_layer})"))?;

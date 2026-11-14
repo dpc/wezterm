@@ -14,6 +14,10 @@ pub const V_TOP_LEFT: usize = 0;
 pub const V_TOP_RIGHT: usize = 1;
 pub const V_BOT_LEFT: usize = 2;
 pub const V_BOT_RIGHT: usize = 3;
+/// Existing background/text/overlay indices plus three cell-border passes.
+pub const SUBLAYER_COUNT: usize = 6;
+/// Background, outside fill, below-text borders, text, above-text borders, overlay.
+pub const SUBLAYER_DRAW_ORDER: [usize; SUBLAYER_COUNT] = [0, 3, 4, 1, 5, 2];
 
 /// a regular monochrome text glyph
 const IS_GLYPH: f32 = 0.0;
@@ -310,9 +314,7 @@ impl BoxedQuad {
 
 #[derive(Default)]
 pub struct HeapQuadAllocator {
-    layer0: Vec<Box<BoxedQuad>>,
-    layer1: Vec<Box<BoxedQuad>>,
-    layer2: Vec<Box<BoxedQuad>>,
+    layers: [Vec<Box<BoxedQuad>>; SUBLAYER_COUNT],
 }
 
 impl std::fmt::Debug for HeapQuadAllocator {
@@ -324,7 +326,7 @@ impl std::fmt::Debug for HeapQuadAllocator {
 impl HeapQuadAllocator {
     pub fn apply_to(&self, other: &mut TripleLayerQuadAllocator) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
-        for (layer_num, quads) in [(0, &self.layer0), (1, &self.layer1), (2, &self.layer2)] {
+        for (layer_num, quads) in self.layers.iter().enumerate() {
             for quad in quads {
                 other.extend_with(layer_num, &quad.to_vertices());
             }
@@ -336,12 +338,7 @@ impl HeapQuadAllocator {
 
 impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
     fn allocate(&mut self, layer_num: usize) -> anyhow::Result<QuadImpl<'_>> {
-        let quads = match layer_num {
-            0 => &mut self.layer0,
-            1 => &mut self.layer1,
-            2 => &mut self.layer2,
-            _ => unreachable!(),
-        };
+        let quads = &mut self.layers[layer_num];
 
         quads.push(Box::new(BoxedQuad::default()));
 
@@ -354,12 +351,7 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
             return;
         }
 
-        let dest_quads = match layer_num {
-            0 => &mut self.layer0,
-            1 => &mut self.layer1,
-            2 => &mut self.layer2,
-            _ => unreachable!(),
-        };
+        let dest_quads = &mut self.layers[layer_num];
 
         // This is logically equivalent to
         // https://doc.rust-lang.org/std/primitive.slice.html#method.as_chunks_unchecked

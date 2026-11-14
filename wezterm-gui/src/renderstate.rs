@@ -452,7 +452,7 @@ impl TripleVertexBuffer {
 }
 
 pub struct RenderLayer {
-    pub vb: RefCell<[TripleVertexBuffer; 3]>,
+    pub vb: RefCell<[TripleVertexBuffer; crate::quad::SUBLAYER_COUNT]>,
     context: RenderContext,
     zindex: i8,
 }
@@ -462,6 +462,9 @@ impl RenderLayer {
         let vb = [
             Self::compute_vertices(context, 32)?,
             Self::compute_vertices(context, num_quads)?,
+            Self::compute_vertices(context, 32)?,
+            Self::compute_vertices(context, 32)?,
+            Self::compute_vertices(context, 32)?,
             Self::compute_vertices(context, 32)?,
         ];
 
@@ -488,8 +491,11 @@ impl RenderLayer {
             let layer0 = vbs[0].map().extend_lifetime();
             let layer1 = vbs[1].map().extend_lifetime();
             let layer2 = vbs[2].map().extend_lifetime();
+            let layer3 = vbs[3].map().extend_lifetime();
+            let layer4 = vbs[4].map().extend_lifetime();
+            let layer5 = vbs[5].map().extend_lifetime();
             TripleLayerQuadAllocator::Gpu(BorrowedLayers {
-                layers: [layer0, layer1, layer2],
+                layers: [layer0, layer1, layer2, layer3, layer4, layer5],
                 _owner: vbs,
             })
         }
@@ -554,10 +560,10 @@ impl RenderLayer {
 }
 
 pub struct BorrowedLayers {
-    pub layers: [MappedQuads<'static>; 3],
+    pub layers: [MappedQuads<'static>; crate::quad::SUBLAYER_COUNT],
 
     // layers references _owner, so it must be dropped after layers.
-    _owner: Ref<'static, [TripleVertexBuffer; 3]>,
+    _owner: Ref<'static, [TripleVertexBuffer; crate::quad::SUBLAYER_COUNT]>,
 }
 
 impl TripleLayerQuadAllocatorTrait for BorrowedLayers {
@@ -649,7 +655,7 @@ impl RenderState {
         let mut allocated = false;
 
         for layer in self.layers.borrow().iter() {
-            for vb_idx in 0..3 {
+            for vb_idx in 0..crate::quad::SUBLAYER_COUNT {
                 if let Some(need_quads) = layer.need_more_quads(vb_idx) {
                     // Round up to next multiple of 128 that is >=
                     // the number of needed quads for this frame

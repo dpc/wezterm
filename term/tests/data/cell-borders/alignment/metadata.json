@@ -1,0 +1,47 @@
+{
+  "binary_sha256": "cf1cfc6f3b813a711faa636bf2303f15f1fdb543a5c3c64bdfa77e61a230ba48",
+  "fixture_sha256": "59f62e74b961ae26e790bd426ed52ec68cf010612098d1bd6b2a042f5f350daf",
+  "geometry": [
+    {
+      "event": "new-session",
+      "panes": [
+        {
+          "cursor_x": 0,
+          "cursor_y": 0,
+          "history_size": 0,
+          "pane_height": 24,
+          "pane_id": "%0",
+          "pane_left": 0,
+          "pane_top": 0,
+          "pane_width": 80,
+          "session_name": "border",
+          "window_id": "@0"
+        }
+      ]
+    },
+    {
+      "event": "refresh",
+      "panes": [
+        {
+          "cursor_x": 0,
+          "cursor_y": 0,
+          "history_size": 0,
+          "pane_height": 24,
+          "pane_id": "%0",
+          "pane_left": 0,
+          "pane_top": 0,
+          "pane_width": 80,
+          "session_name": "border",
+          "window_id": "@0"
+        }
+      ]
+    }
+  ],
+  "initial_terminal": {
+    "cols": 80,
+    "rows": 24
+  },
+  "source_sha": "05be67b9755a44fee3715d25c8acee35f1990204",
+  "spec_sha256": "76cd38dd5fd3565ec5ea9989f3fba45bd66b8cedb9da7b90a01138fd684a45be",
+  "status": "off"
+}

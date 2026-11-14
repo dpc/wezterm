@@ -14,6 +14,8 @@ use vtparse::{CsiParam, VTActor, VTParser};
 
 use crate::allocate::*;
 
+#[cfg(all(test, feature = "std"))]
+mod cell_border_tests;
 mod sixel;
 use sixel::SixelBuilder;
 
@@ -50,6 +52,12 @@ impl GetTcapBuilder {
 struct ParseState {
     sixel: Option<SixelBuilder>,
     dcs: Option<ShortDeviceControl>,
+    /// Drain an oversized cell-border payload without retaining its bytes.
+    border_dcs_overflow: bool,
+    /// Candidate waiting for the backslash of a seven-bit ST.
+    pending_border_dcs: Option<ShortDeviceControl>,
+    /// Raw input byte, used to distinguish ST from cancellation at unhook.
+    current_byte: u8,
     get_tcap: Option<GetTcapBuilder>,
     #[cfg(feature = "tmux_cc")]
     tmux_state: Option<RefCell<crate::tmux_cc::Parser>>,
@@ -109,8 +117,9 @@ impl Parser {
                         callback: &mut callback,
                         state: &mut parser_state,
                     };
-                    self.state_machine
-                        .parse(unparsed_str.as_bytes(), &mut perform);
+                    for byte in unparsed_str.bytes() {
+                        perform.parse_byte(&mut self.state_machine, byte);
+                    }
                 }
             }
             return;
@@ -120,7 +129,9 @@ impl Parser {
             callback: &mut callback,
             state: &mut self.state.borrow_mut(),
         };
-        self.state_machine.parse(bytes, &mut perform);
+        for &byte in bytes {
+            perform.parse_byte(&mut self.state_machine, byte);
+        }
     }
 
     /// A specialized version of the parser that halts after recognizing the
@@ -146,7 +157,7 @@ impl Parser {
                 state: &mut self.state.borrow_mut(),
             };
             for (idx, b) in bytes.iter().enumerate() {
-                self.state_machine.parse_byte(*b, &mut perform);
+                perform.parse_byte(&mut self.state_machine, *b);
                 if first.borrow().is_some() {
                     // if we recognized an action, record the iterator index
                     first_idx = Some(idx);
@@ -176,13 +187,11 @@ impl Parser {
         let mut actions = Vec::new();
         let mut first_idx = None;
         for (idx, b) in bytes.iter().enumerate() {
-            self.state_machine.parse_byte(
-                *b,
-                &mut Performer {
-                    callback: &mut |action| actions.push(action),
-                    state: &mut self.state.borrow_mut(),
-                },
-            );
+            Performer {
+                callback: &mut |action| actions.push(action),
+                state: &mut self.state.borrow_mut(),
+            }
+            .parse_byte(&mut self.state_machine, *b);
             if !actions.is_empty() && self.state_machine.is_ground() {
                 // if we recognized any actions, record the iterator index
                 first_idx = Some(idx);
@@ -198,8 +207,34 @@ struct Performer<'a, F: FnMut(Action) + 'a> {
     state: &'a mut ParseState,
 }
 
+impl<'a, F: FnMut(Action)> Performer<'a, F> {
+    fn parse_byte(&mut self, parser: &mut VTParser, byte: u8) {
+        if let Some(dcs) = self.state.pending_border_dcs.take() {
+            if byte == b'\\' {
+                (self.callback)(Action::DeviceControl(
+                    DeviceControlMode::ShortDeviceControl(Box::new(dcs)),
+                ));
+            }
+        }
+        if self
+            .state
+            .dcs
+            .as_ref()
+            .map(|dcs| dcs.byte == b'b' && dcs.intermediates == [b'+'])
+            .unwrap_or(false)
+            && byte != 0x1b
+            && byte != 0x9c
+            && !(0x20..=0x7e).contains(&byte)
+        {
+            self.state.border_dcs_overflow = true;
+        }
+        self.state.current_byte = byte;
+        parser.parse_byte(byte, self);
+    }
+}
+
 fn is_short_dcs(intermediates: &[u8], byte: u8) -> bool {
-    if intermediates == &[b'$'] && byte == b'q' {
+    if (intermediates == &[b'$'] && byte == b'q') || (intermediates == &[b'+'] && byte == b'b') {
         // DECRQSS
         true
     } else {
@@ -240,6 +275,7 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
         self.state.sixel.take();
         self.state.get_tcap.take();
         self.state.dcs.take();
+        self.state.border_dcs_overflow = false;
         if byte == b'q' && intermediates.is_empty() && !ignored_extra_intermediates {
             self.state.sixel.replace(SixelBuilder::new(params));
         } else if byte == b'q' && intermediates == [b'+'] {
@@ -271,7 +307,11 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
 
     fn dcs_put(&mut self, data: u8) {
         if let Some(dcs) = self.state.dcs.as_mut() {
-            dcs.data.push(data);
+            if dcs.byte == b'b' && dcs.intermediates == [b'+'] && dcs.data.len() >= 256 {
+                self.state.border_dcs_overflow = true;
+            } else {
+                dcs.data.push(data);
+            }
         } else if let Some(sixel) = self.state.sixel.as_mut() {
             sixel.push(data);
         } else if let Some(tcap) = self.state.get_tcap.as_mut() {
@@ -301,6 +341,20 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
 
     fn dcs_unhook(&mut self) {
         if let Some(dcs) = self.state.dcs.take() {
+            if self.state.border_dcs_overflow {
+                self.state.border_dcs_overflow = false;
+                return;
+            }
+            if dcs.byte == b'b' && dcs.intermediates == [b'+'] {
+                match self.state.current_byte {
+                    0x1b => {
+                        self.state.pending_border_dcs = Some(dcs);
+                        return;
+                    }
+                    0x9c => {}
+                    _ => return,
+                }
+            }
             (self.callback)(Action::DeviceControl(
                 DeviceControlMode::ShortDeviceControl(Box::new(dcs)),
             ));
